@@ -1,5 +1,5 @@
-// 設定每月模型檢查：部署後直接按上方的 Run，就會建立每月 1 號早上 9 點的排程。
-// 這個函數放在檔案最上面，所以不用選函數，按 Run 就是它。跑兩次也不會重複建立。
+// 設定每月模型檢查：部署後不用按 Run，下一則 LINE 訊息進來時機器人自己建立排程
+// （每月 1 號早上 9 點）。這個函數是手動備用，直接按 Run 也會建立，跑兩次不會重複。
 function setupMonthlyCheck() {
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function (tr) {
@@ -38,8 +38,8 @@ function setupMonthlyCheck() {
  *   PANEL_<ownerId>           — 設定面板的進行狀態（JSON，機器人自己寫）
  *
  * === 模型每月檢查 ===
- *   每月 1 號早上 9 點跑一次 monthlyModelCheck（部署後直接按 Run，
- *   檔案最上面的 setupMonthlyCheck 會建立排程）。只有當現在用的模型已經退役
+ *   每月 1 號早上 9 點跑一次 monthlyModelCheck（排程不用手動建立，
+ *   下一則 LINE 訊息進來時機器人自己建立）。只有當現在用的模型已經退役
  *   （不在 Google 的模型清單裡），才換成最新的 Flash（主要）和
  *   最新的 Flash-Lite（備用）。舊模型還在就什麼都不做，不會因為
  *   出了新模型就一直換。模型不在設定面板裡，面板只能看，不能改。
@@ -55,7 +55,7 @@ function setupMonthlyCheck() {
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.4';
+const SCRIPT_VERSION = '1.1.5';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -266,6 +266,7 @@ function isVideoUrl(url) {
 // ---------- webhook 入口 ----------
 function doPost(e) {
   console.log('Bot version: ' + SCRIPT_VERSION);
+  ensureMonthlyTrigger(); // 排程不存在時自己建立，不用手動去編輯器按 Run
   const body = (e && e.postData && e.postData.contents) || '';
   try {
     // Apps Script 的 doPost 看不到 HTTP header，無法驗 LINE 簽名，
@@ -667,7 +668,7 @@ function memberFlex(groupId, s) {
 }
 
 // ---------- 模型每月檢查 ----------
-// 每月 1 號早上 9 點跑一次（排程見 setupMonthlyCheck）。
+// 每月 1 號早上 9 點跑一次（排程由 ensureMonthlyTrigger 自動建立，見下方）。
 // 只有當現在用的模型已經退役（不在 Google 的模型清單裡），才換成
 // 最新的 Flash（主要）和最新的 Flash-Lite（備用）。舊模型還在就
 // 什麼都不做，不會因為出了新模型就一直換。
@@ -778,6 +779,24 @@ function monthlyModelCheck() {
 }
 
 // setupMonthlyCheck 在檔案最上面，直接按 Run 就會執行。
+
+// 排程不存在時自己建立：部署後不用去編輯器按 Run，下一則 LINE 訊息進來就會建立。
+// 用 cache 節流，每 6 小時最多檢查一次；建立失敗也不影響回覆。
+function ensureMonthlyTrigger() {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache.get('triggerChecked')) return;
+    cache.put('triggerChecked', '1', 21600);
+    const triggers = ScriptApp.getProjectTriggers();
+    for (let i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === 'monthlyModelCheck') return;
+    }
+    ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
+    console.log('每月模型檢查已排程：每月 1 號早上 9 點');
+  } catch (err) {
+    console.log('建立每月排程失敗: ' + err);
+  }
+}
 
 // ---------- Gemini ----------
 // 主要模型用滿（429）或出錯時，自動改用備用模型。兩個模型各有自己的免費額度，

@@ -303,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.4', () => {
+t('14. doPost logs Bot version 1.1.5', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.4') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.5') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -847,18 +847,51 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.4') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.5') !== -1, 'version in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.4') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.5') !== -1, 'version in fallback');
 });
 
 t('66. setupMonthlyCheck is the first function (plain Run runs it)', () => {
   const firstFn = CODE.match(/function\s+(\w+)\s*\(/);
   assert(firstFn, 'a function exists');
   eq(firstFn[1], 'setupMonthlyCheck', 'first function is the setup');
+});
+
+t('67. ensureMonthlyTrigger creates the trigger once, throttled by cache', () => {
+  const e = fresh();
+  eq(e.triggers.length, 0, 'none at start');
+  e.sb.ensureMonthlyTrigger();
+  eq(e.triggers.length, 1, 'created');
+  eq(e.triggers[0].getHandlerFunction(), 'monthlyModelCheck', 'handler');
+  eq(e.triggers[0].day, 1, 'day 1');
+  eq(e.triggers[0].hour, 9, 'hour 9');
+  e.sb.ensureMonthlyTrigger();
+  eq(e.triggers.length, 1, 'not duplicated');
+});
+
+t('68. ensureMonthlyTrigger does nothing when the trigger exists', () => {
+  const e = fresh();
+  e.sb.setupMonthlyCheck();
+  eq(e.triggers.length, 1, 'setup made one');
+  e.sb.ensureMonthlyTrigger();
+  eq(e.triggers.length, 1, 'still one');
+});
+
+t('69. doPost creates the missing trigger and still replies if that fails', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
+  eq(e.triggers.length, 1, 'trigger created on first message');
+  eq(e.replies.length, 1, 'bot still replied');
+  const e2 = fresh();
+  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e2.sb.ScriptApp.getProjectTriggers = function() { throw new Error('no permission'); };
+  e2.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
+  eq(e2.replies.length, 1, 'bot still replied when trigger setup throws');
 });
 
 // ================= summary =================
