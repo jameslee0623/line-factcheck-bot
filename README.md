@@ -84,8 +84,8 @@
    ```
 
    把 `ABC123` 換成你自己的網址，`aB3x9qZ7kL2` 換成第三部分第 9 步你編的 `WEBHOOK_TOKEN`
-8. 回到第二部分的 LINE Developers 頁面，把這個完整網址貼到 **Webhook URL** 的欄位裡
-9. 點 **Verify（驗證）**，應該會顯示成功
+8. 回到第二部分的 LINE Developers 頁面，把這個完整網址貼到 **Webhook URL** 的欄位裡，點旁邊的 **Update（更新）** 存起來
+9. 存好之後，欄位下面會出現 **Verify（驗證）**，點它，應該會顯示成功
 10. 把 **Use webhook（使用 webhook）** 打開（**ON**）
 
 ## 第五部分：先測試（進群組之前先做）
