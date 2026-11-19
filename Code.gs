@@ -18,6 +18,8 @@
  */
 
 // ---------- 常數 ----------
+// 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
+const SCRIPT_VERSION = '1.0.0';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
@@ -54,6 +56,7 @@ function doGet() {
 
 // ---------- webhook 入口 ----------
 function doPost(e) {
+  console.log('Bot version: ' + SCRIPT_VERSION);
   const body = (e && e.postData && e.postData.contents) || '';
   try {
     // Apps Script 的 doPost 看不到 HTTP header，無法驗 LINE 簽名，
