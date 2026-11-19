@@ -156,9 +156,8 @@
 
 **只需要做一次設定**（部署完之後）：
 
-1. 在 Apps Script 編輯器裡，點上方函數選單（預設顯示 `doPost` 之類的名稱），選 `setupMonthlyCheck`
-2. 點 **Run（執行）**。Google 會問要不要授權，選你的帳號，點 **Allow（允許）**
-3. 完成。之後每個月 1 號它會自己跑。想確認有沒有設好：點左邊的**時鐘圖示**（Triggers，觸發條件），應該會看到 `monthlyModelCheck`，每月 1 號早上 9 點
+1. 在 Apps Script 編輯器裡，直接點 **Run（執行）**。`setupMonthlyCheck` 是檔案裡第一個函數，所以不用選函數，按 Run 就是它。Google 會問要不要授權，選你的帳號，點 **Allow（允許）**
+2. 完成。之後每個月 1 號它會自己跑。想確認有沒有設好：點左邊的**時鐘圖示**（Triggers，觸發條件），應該會看到 `monthlyModelCheck`，每月 1 號早上 9 點
 
 ## 費用
 
