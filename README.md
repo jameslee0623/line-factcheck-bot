@@ -1,135 +1,135 @@
-# LINE Family Fact-Check Bot
+# LINE 家族查核機器人
 
-**What this is:** a LINE bot that checks forwarded articles in your family group chat. Someone posts a news link, the bot checks it with Google's free Gemini AI and replies gently, with source links. It lives in Google Apps Script, so you don't need your own server. It costs $0.
+**這是什麼：** 一個 LINE 機器人，幫你查核家族群組裡轉發的文章。有人貼新聞連結，機器人就用 Google 免費的 Gemini AI 幫你查證，用溫和的語氣回覆，並附上資料來源連結。程式跑在 Google Apps Script 上，不用自己架伺服器，費用是 $0。
 
-**You don't need to know how to code.** You only need to copy, paste, and click. It takes about 30 minutes.
+**不用會寫程式。** 只要會複製、貼上、點滑鼠就好，大約 30 分鐘。
 
-## Before you start
+## 開始之前
 
-You need:
+你需要：
 
-1. A Google account (Gmail)
-2. A LINE account
-3. About 30 minutes
+1. 一個 Google 帳號（Gmail）
+2. 一個 LINE 帳號
+3. 大約 30 分鐘
 
-Some words you will see, in plain language:
+下面這些詞，你會在步驟裡看到，先用白話解釋一下：
 
-- **API key** — like a password that lets this code use Gemini (Google's AI)
-- **Channel access token** — like a password that lets this code send messages as your LINE bot
-- **Webhook URL** — the address LINE uses to send messages to the code
-- **Deploy** — publish the code, so LINE can reach it on the internet
-- **Script properties** — a safe place inside Apps Script to store the passwords above
+- **API 金鑰** — 像一把密碼，讓這支程式可以使用 Gemini（Google 的 AI）
+- **Channel access token** — 像一把密碼，讓這支程式可以用你的 LINE 機器人帳號發訊息
+- **Webhook URL** — 一個網址，LINE 用它把訊息傳給這支程式
+- **部署** — 把程式發布到網路上，這樣 LINE 才找得到它
+- **指令碼屬性** — Apps Script 裡面一個安全放密碼的地方
 
 ---
 
-## Part 1: Get a free Gemini key (about 5 minutes)
+## 第一部分：取得免費的 Gemini 金鑰（約 5 分鐘）
 
-1. Open your browser and go to **aistudio.google.com**
-2. Sign in with your Google account
-3. On the left menu, click **Get API key**
-4. Click **Create API key**
-5. If it asks you to pick or create a project, just click through — accept the default
-6. A long code appears. **Copy it and save it somewhere safe** (for example in a note on your phone). This is your Gemini key. It is like a password — don't post it in any chat
-7. Done. You don't need to pay anything, and no credit card is needed
+1. 打開瀏覽器，到 **aistudio.google.com**
+2. 用你的 Google 帳號登入
+3. 點左邊選單的 **Get API key（取得 API 金鑰）**
+4. 點 **Create API key（建立 API 金鑰）**
+5. 如果它問你要選哪個專案或要不要建立專案，直接按預設值繼續就好
+6. 畫面會出現一串很長的代碼。**把它複製下來，存到安全的地方**（例如手機備忘錄）。這就是你的 Gemini 金鑰，像密碼一樣，不要貼到任何聊天室
+7. 完成。不用付錢，也不用綁信用卡
 
-## Part 2: Create the LINE bot account (about 10 minutes)
+## 第二部分：建立 LINE 機器人帳號（約 10 分鐘）
 
-1. Go to **manager.line.biz** and sign in with your LINE account
-2. Click **Create** to make a new Official Account
-3. Give it a name, for example `查核小幫手`. Set the country to Taiwan. Finish the setup
-4. After the account is created, find **Settings** in the left menu, then find **Messaging API**, and turn it on
-5. Now go to **developers.line.biz** and sign in with the same LINE account
-6. Click your channel (the account you just made)
-7. Click the **Messaging API** tab at the top of the page
-8. Find **Channel access token** and click **Issue**. A long code appears — **copy it and save it somewhere safe**. This is your LINE token
-9. On the same page, find **Allow bot to join group chats** and turn it **ON**. It is OFF by default. If you skip this step, the bot can never enter a group
-10. Keep this page open in a tab — you will come back to it in Part 4
+1. 到 **manager.line.biz**，用你的 LINE 帳號登入
+2. 點 **Create（建立）**，新增一個官方帳號
+3. 幫它取個名字，例如 `查核小幫手`，國家選台灣，完成設定
+4. 帳號建立好之後，在左邊選單找到 **Settings（設定）**，再找到 **Messaging API**，把它開啟
+5. 再到 **developers.line.biz**，用同一個 LINE 帳號登入
+6. 點你的 channel（就是剛剛建立的帳號）
+7. 點頁面上方的 **Messaging API** 分頁
+8. 找到 **Channel access token**，點 **Issue（核發）**。畫面會出現一串很長的代碼——**複製下來，存到安全的地方**。這就是你的 LINE token
+9. 在同一頁找到 **Allow bot to join group chats（允許機器人加入群組聊天）**，把它打開（**ON**）。它預設是關的，如果跳過這一步，機器人永遠進不了群組
+10. 這個分頁先不要關，第四部分還會用到
 
-## Part 3: Put the code in Google Apps Script (about 10 minutes)
+## 第三部分：把程式碼放進 Google Apps Script（約 10 分鐘）
 
-1. Go to **script.google.com** and sign in with your Google account
-2. Click **New project**
-3. You will see a page with some sample code on it (it starts with `function myFunction`). Select all of it and delete it
-4. Open the file **`Code.gs`** from this repo. Select all of it and copy it
-5. Paste it into the Apps Script page
-6. Save: click the disk icon, or press Ctrl+S (Windows) / Cmd+S (Mac)
-7. At the top, click **Untitled project** and name it `LINE Fact Check Bot`
-8. On the left side, click the **gear icon** (Project Settings)
-9. Click **Script properties**, then **Add script property**. Add these 4, one by one. For each one, type the name, type the value, and click **Save script property**:
+1. 到 **script.google.com**，用你的 Google 帳號登入
+2. 點 **New project（新增專案）**
+3. 畫面上有一些範例程式碼（開頭是 `function myFunction`）。全部選起來，刪掉
+4. 打開這個專案裡的 **`Code.gs`** 檔案，全部選起來，複製
+5. 貼到 Apps Script 的頁面裡
+6. 存檔：點磁碟片圖示，或按 Ctrl+S（Windows）／Cmd+S（Mac）
+7. 點上方的 **Untitled project**，把專案改名為 `LINE Fact Check Bot`
+8. 點左邊的**齒輪圖示**（Project Settings，專案設定）
+9. 點 **Script properties（指令碼屬性）**，再點 **Add script property（新增指令碼屬性）**。下面 4 個，一個一個加。每次輸入名稱、輸入值，再按 **Save script property**：
 
-   | Name (type exactly) | Value |
+   | 名稱（照這樣打，一個字都不能錯） | 值 |
    |---|---|
-   | `LINE_CHANNEL_ACCESS_TOKEN` | The LINE code from Part 2, step 8 |
-   | `GEMINI_API_KEY` | The Gemini key from Part 1, step 6 |
+   | `LINE_CHANNEL_ACCESS_TOKEN` | 第二部分第 8 步複製的 LINE 代碼 |
+   | `GEMINI_API_KEY` | 第一部分第 6 步複製的 Gemini 金鑰 |
    | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
-   | `WEBHOOK_TOKEN` | Make up your own random letters and numbers, for example `aB3x9qZ7kL2`. Write it down — you need it in Part 4 |
+   | `WEBHOOK_TOKEN` | 自己編一串亂碼英數字，例如 `aB3x9qZ7kL2`。記下來，第四部分會用到 |
 
-10. Done. Your code and passwords are saved
+10. 完成。程式碼和密碼都存好了
 
-## Part 4: Publish the code and connect LINE (about 5 minutes)
+## 第四部分：發布程式碼，接上 LINE（約 5 分鐘）
 
-1. In Apps Script, at the top right, click **Deploy**, then **New deployment**
-2. Click the gear icon next to "Select type" and choose **Web app**
-3. **Execute as:** choose **Me**
-4. **Who has access:** choose **Anyone**
-5. Click **Deploy**. Google will ask for permission — choose your account and click **Allow**
-6. A web address (URL) appears. It ends with `/exec`. **Copy it**
-7. Now add your token to the end of that address. It should look like this:
+1. 在 Apps Script 裡，點右上角的 **Deploy（部署）**，再點 **New deployment（新增部署作業）**
+2. 點「Select type」旁邊的齒輪圖示，選擇 **Web app（網頁應用程式）**
+3. **Execute as（執行身分）：** 選 **Me（我）**
+4. **Who has access（存取權）：** 選 **Anyone（所有人）**
+5. 點 **Deploy（部署）**。Google 會問你要不要授權，選你的帳號，點 **Allow（允許）**
+6. 畫面會出現一個網址，結尾是 `/exec`。**把它複製下來**
+7. 在這個網址後面加上你的 token，長這樣：
 
    ```
    https://script.google.com/macros/s/ABC123/exec?token=aB3x9qZ7kL2
    ```
 
-   Replace `ABC123` with your real address, and `aB3x9qZ7kL2` with the `WEBHOOK_TOKEN` you made in Part 3, step 9
-8. Go back to the LINE Developers page from Part 2. Paste this full address into the **Webhook URL** box
-9. Click **Verify**. It should say success
-10. Turn **Use webhook** ON
+   把 `ABC123` 換成你自己的網址，`aB3x9qZ7kL2` 換成第三部分第 9 步你編的 `WEBHOOK_TOKEN`
+8. 回到第二部分的 LINE Developers 頁面，把這個完整網址貼到 **Webhook URL** 的欄位裡
+9. 點 **Verify（驗證）**，應該會顯示成功
+10. 把 **Use webhook（使用 webhook）** 打開（**ON**）
 
-## Part 5: Test it first (do this before the group)
+## 第五部分：先測試（進群組之前先做）
 
-1. In LINE, add your new bot account as a friend. Search for its name in LINE, or scan its QR code (you can find the QR code in the Official Account Manager)
-2. Send it a message. Try one of these:
-   - Paste a news link
-   - Type: `查 台積電要被美國罰款是真的嗎`
-3. Wait a few seconds. It should reply with a check and source links
-4. If it replies, it works. If it doesn't, see "If something goes wrong" below
+1. 在 LINE 裡把你的新機器人帳號加為好友。用 LINE 搜尋它的名字，或掃它的 QR code（QR code 在 Official Account Manager 裡可以找到）
+2. 傳訊息給它，試試下面其中一種：
+   - 貼一個新聞連結
+   - 打：`查 台積電要被美國罰款是真的嗎`
+3. 等幾秒鐘。它應該會回覆查證結果和資料來源連結
+4. 有回覆就代表成功了。如果沒有回覆，看下面的「出問題怎麼辦」
 
-## Part 6: Invite it to the family group
+## 第六部分：邀請它進家族群組
 
-1. Open the family group chat in LINE
-2. Tap the group name at the top → **Invite** → choose your bot account → **Invite**
-3. Post a news link in the group. The bot should reply in the group
-4. Done. Group members can also type `查` + a question, or @ the bot
+1. 打開家族群組聊天室
+2. 點上方群組名稱 → **Invite（邀請）** → 選你的機器人帳號 → **Invite（邀請）**
+3. 在群組裡貼一個新聞連結，機器人應該會在群組裡回覆
+4. 完成。群組成員也可以打 `查` + 問題，或 @ 機器人來問
 
-## How to use it (for group members)
+## 使用方式（給群組成員）
 
-- **Post a news link** — the bot checks it by itself
-- **Type `查` + your question** — for example: `查 普拿疼可以每天吃嗎`
-- **Type `!fact` + your question** — same thing, in English
-- **@ the bot** — type @ and pick the bot, then write your question
-- **In a private chat with the bot** — any message works, and you can also send it a photo or screenshot to check
+- **貼新聞連結** — 機器人會自己查證
+- **打 `查` + 問題** — 例如：`查 普拿疼可以每天吃嗎`
+- **打 `!fact` + 問題** — 一樣的意思，用英文
+- **@ 機器人** — 打 @ 選機器人，再寫問題
+- **私聊機器人** — 傳任何訊息都會回，也可以傳照片或截圖給它查
 
-## What it costs
+## 費用
 
-$0. Here is why:
+$0。原因：
 
-- Gemini (Google's AI) is free for this amount of use — about 100 to 1000 questions a day. A family group asks far fewer than that
-- LINE does not charge for replies. The bot only replies when someone talks to it — it never sends messages by itself
-- Google Apps Script is free
+- Gemini（Google 的 AI）免費額度夠用——一天大約可以問 100 到 1000 次，家族群組問的次數遠低於這個
+- LINE 的回覆不用錢。機器人只在有人跟它說話時才回覆，不會自己主動發訊息
+- Google Apps Script 免費
 
-## If something goes wrong
+## 出問題怎麼辦
 
-| What happens | What to do |
+| 發生什麼事 | 怎麼辦 |
 |---|---|
-| Webhook **Verify** fails | The address is wrong, or the `?token=` part does not match the `WEBHOOK_TOKEN` you saved in Part 3. Check both and try again. Also check the deployment access is set to **Anyone** (Part 4, step 4) |
-| The bot says nothing at all | In Apps Script, click the **clock icon** on the left (Executions). If there is nothing there, the message never reached the code — check the webhook URL again. If there is an error message there, read it and check the table below |
-| The bot replies: 今天問太多了 | The free daily limit is used up. Wait until tomorrow |
-| The bot replies: 模型名稱可能已退役 | Google retired that AI model name. Go to Google AI Studio and see the current free Flash model name, then change `GEMINI_MODEL` in Script properties (Part 3, step 9) and save |
-| It works in private chat but not in the group | **Allow bot to join group chats** is still OFF (Part 2, step 9), or the bot has not been invited to the group yet (Part 6) |
-| The bot replies very slowly or not at all | The AI sometimes takes more than 50 seconds, and LINE only waits 1 minute. Just ask again — it usually works the second time |
+| Webhook **Verify（驗證）** 失敗 | 網址錯了，或 `?token=` 後面那串跟第三部分存的 `WEBHOOK_TOKEN` 不一樣。兩個都檢查一遍再試一次。另外確認部署時的存取權是 **Anyone（所有人）**（第四部分第 4 步） |
+| 機器人完全不回 | 在 Apps Script 裡，點左邊的**時鐘圖示**（Executions，執行紀錄）。如果裡面什麼都沒有，表示訊息根本沒傳到程式——回去檢查 webhook 網址。如果裡面有錯誤訊息，照下面幾列對照 |
+| 機器人回：今天問太多了 | 今天的免費額度用完了，明天再試 |
+| 機器人回：模型名稱可能已退役 | Google 把那個 AI 型號名稱停用了。到 Google AI Studio 看現在免費的 Flash 型號名稱，再去指令碼屬性改 `GEMINI_MODEL`（第三部分第 9 步），存檔 |
+| 私聊會回，群組不會回 | **Allow bot to join group chats** 還是關的（第二部分第 9 步），或機器人還沒被邀請進群組（第六部分） |
+| 回得很慢或沒回 | AI 偶爾會超過 50 秒，而 LINE 只等 1 分鐘。再問一次，通常第二次就好了 |
 
-## Safety — please read
+## 安全提醒，請看一下
 
-- **Never share the 3 codes** (Gemini key, LINE token, webhook token). They are passwords. Don't post them in any group chat, and don't put them in the code itself — they belong in Script properties only
-- **Don't share the webhook address.** It has your secret token in it
-- The free Gemini service may use your messages to improve Google's products, so don't send anything private
+- **3 組密碼絕對不要分享**（Gemini 金鑰、LINE token、webhook token）。不要貼到任何群組，也不要寫進程式碼裡——它們只能放在指令碼屬性裡
+- **不要分享 webhook 網址**，裡面有你的秘密 token
+- 免費版 Gemini 可能會拿你的訊息去改善 Google 的產品，所以不要傳私密內容
