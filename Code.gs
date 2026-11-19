@@ -55,7 +55,7 @@ function setupMonthlyCheck() {
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.6';
+const SCRIPT_VERSION = '1.1.7';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -286,6 +286,52 @@ function doPost(e) {
   return textOut('OK');
 }
 
+// ---------- 最近訊息 ----------
+// 回覆指定查核用的：機器人收到群組 / 1:1 的每一則文字和圖片訊息，都把 id 和內容
+// 記在 cache 裡（最多 20 則，6 小時）。有人回覆某則訊息並 @ 機器人或打觸發詞時，
+// webhook 裡的 quotedMessageId 可以對到這裡的 id，就能查被回覆的那則。
+// LINE 不會把被回覆訊息的內容再送一次，所以沒記到的（超過 6 小時、機器人加入
+// 之前的訊息）就查不到，只能請對方把文字複製給我。
+function recentKey(chatId) {
+  return 'recent_' + chatId;
+}
+
+function rememberMessage(chatId, msg, senderName) {
+  if (!msg || !msg.id) return;
+  if (msg.type !== 'text' && msg.type !== 'image') return;
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = recentKey(chatId);
+    let list = [];
+    try { list = JSON.parse(cache.get(key) || '[]'); } catch (e) { list = []; }
+    list = list.filter(function (m) { return m.id !== msg.id; });
+    list.push({
+      id: msg.id,
+      type: msg.type,
+      text: (msg.text || '').slice(0, 1000),
+      sender: senderName || '',
+      t: Date.now()
+    });
+    while (list.length > 20) list.shift();
+    cache.put(key, JSON.stringify(list), 21600);
+  } catch (err) {
+    console.log('記最近訊息失敗: ' + err);
+  }
+}
+
+function findRecentMessage(chatId, messageId) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const list = JSON.parse(cache.get(recentKey(chatId)) || '[]');
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === messageId) return list[i];
+    }
+  } catch (err) {
+    console.log('找最近訊息失敗: ' + err);
+  }
+  return null;
+}
+
 // ---------- 事件處理 ----------
 function handleEvent(ev) {
   if (!ev || !ev.replyToken) return;
@@ -312,6 +358,14 @@ function handleEvent(ev) {
   // 學群組名單和成員名字（群組訊息才有）
   if (isGroup) learnGroupAndMember(src);
 
+  // 記住這則訊息（回覆指定查核用；不論這則會不會觸發查核都要記）
+  const chatId = isGroup ? groupId : ('dm_' + (src.userId || ''));
+  let senderName = '';
+  if (isGroup && src.userId) {
+    senderName = (jsonProp('GROUP_MEMBERS_' + groupId, {})[src.userId]) || '';
+  }
+  if (msg.type === 'text' || msg.type === 'image') rememberMessage(chatId, msg, senderName);
+
   if (msg.type === 'text') {
     const text = (msg.text || '').trim();
 
@@ -329,6 +383,37 @@ function handleEvent(ev) {
     // 擁有者在 1:1 的面板操作（直接指令或接續輸入）
     if (!isGroup && isOwner(src.userId, s)) {
       if (handlePanelText(token, text, src.userId, s)) return;
+    }
+
+    // 回覆指定查核：回覆某則訊息並 @ 機器人或打觸發詞，查被回覆的那則，不是回覆本身
+    if (msg.quotedMessageId && (isMentioned(msg) || startsWithTrigger(text, s.triggers))) {
+      const target = findRecentMessage(chatId, msg.quotedMessageId);
+      if (!target) {
+        replyLine(token, '找不到被回覆的那則訊息（只記得最近 6 小時的文字和圖片），請把文字複製給我。', s);
+        return;
+      }
+      if (target.type === 'image') {
+        const imageB64 = downloadLineImage(target.id);
+        if (!imageB64) {
+          replyLine(token, '圖片下載失敗，請再傳一次。', s);
+          return;
+        }
+        const imgAnswer = askGemini('請查核這張圖片裡的內容。', imageB64, s);
+        if (imgAnswer) replyLine(token, imgAnswer, s);
+        return;
+      }
+      let q = target.sender ? '以下是' + target.sender + '說的話，請查核：\n' + target.text
+        : '以下是被回覆的訊息，請查核：\n' + target.text;
+      if (s.fetchLinkText) {
+        const url = firstUrl(q);
+        if (url && !isVideoUrl(url)) {
+          const page = fetchLinkText(url);
+          if (page) q = q + '\n\n連結內文：\n' + page;
+        }
+      }
+      const answer = askGemini(q, '', s);
+      if (answer) replyLine(token, answer, s);
+      return;
     }
 
     if (!shouldAnswer(msg, text, isGroup, s, src)) return;
@@ -379,13 +464,20 @@ function handleEvent(ev) {
   // 貼圖、檔案等不處理
 }
 
-function shouldAnswer(msg, text, isGroup, s, src) {
+function isMentioned(msg) {
   const mentionees = (msg.mention && msg.mention.mentionees) || [];
-  const mentioned = mentionees.some(function (m) { return m.isSelf; });
-  const lower = text.toLowerCase();
+  return mentionees.some(function (m) { return m.isSelf; });
+}
+
+function startsWithTrigger(text, triggers) {
+  const lower = (text || '').toLowerCase();
+  return triggers.some(function (t) { return lower.indexOf(t.toLowerCase()) === 0; });
+}
+
+function shouldAnswer(msg, text, isGroup, s, src) {
   // 手動觸發（@ / 觸發詞）任何人都可以用，不受字數和名單限制
-  if (mentioned) return true;
-  if (s.triggers.some(function (t) { return lower.indexOf(t.toLowerCase()) === 0; })) return true;
+  if (isMentioned(msg)) return true;
+  if (startsWithTrigger(text, s.triggers)) return true;
   // 1:1 私聊：任何文字都回（方便測試和自己用）
   if (!isGroup) return true;
   // 群組自動查核：先看這個人在不在名單
