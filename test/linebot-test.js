@@ -29,16 +29,25 @@ function eq(a, b, msg) { if (a !== b) throw new Error((msg || '') + ' expected '
 function fresh() {
   const props = new Map();
   const cache = new Map();
+  const triggers = [];
   const calls = [];   // every UrlFetchApp.fetch call {url, opts}
   const replies = []; // payloads sent to LINE reply endpoint
   const logs = [];
   const state = {
     gemini: null,      // fn(url, opts) -> {code, body} | 'throw'
     imageOk: true,
+    replyCode: 200,
+    listCode: 200,
     linkHtml: '<html><head><title>T</title></head><body><p>文章內文在這裡。</p></body></html>',
     linkCode: 200,
     groupName: '家族長輩群',
     memberName: '爸爸',
+    modelList: [
+      { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-3.5-flash-lite', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-2.5-flash-lite', supportedGenerationMethods: ['generateContent'] },
+    ],
   };
   function resp(code, body, bytes) {
     return {
@@ -73,14 +82,14 @@ function fresh() {
     UrlFetchApp: {
       fetch: (url, opts) => {
         calls.push({ url, opts });
-        if (url.startsWith(GEMINI_BASE)) {
+        if (url.indexOf(':generateContent') !== -1) {
           if (state.gemini === 'throw') throw new Error('network down');
           if (typeof state.gemini === 'function') return state.gemini(url, opts);
           return resp(200, geminiOk());
         }
         if (url === LINE_REPLY_URL) {
           replies.push(JSON.parse(opts.payload));
-          return resp(200, '{}');
+          return resp(state.replyCode, '{}');
         }
         if (url.indexOf('/message/') !== -1 && url.endsWith('/content')) {
           if (!state.imageOk) return resp(404, 'not found');
@@ -92,9 +101,26 @@ function fresh() {
         if (url.indexOf('/group/') !== -1 && url.indexOf('/member/') !== -1) {
           return resp(200, { displayName: state.memberName, userId: 'U1' });
         }
+        if (url.indexOf('/v1beta/models?') !== -1) {
+          if (state.listCode !== 200) return resp(state.listCode, 'err');
+          return resp(200, { models: state.modelList });
+        }
         // anything else: link fetch
         return resp(state.linkCode, state.linkHtml);
       },
+    },
+    ScriptApp: {
+      getProjectTriggers: () => triggers.slice(),
+      deleteTrigger: (tr) => { const i = triggers.indexOf(tr); if (i !== -1) triggers.splice(i, 1); },
+      newTrigger: (fn) => ({
+        timeBased: () => ({
+          onMonthDay: (d) => ({
+            atHour: (h) => ({
+              create: () => { const tr = { getHandlerFunction: () => fn, day: d, hour: h }; triggers.push(tr); return tr; },
+            }),
+          }),
+        }),
+      }),
     },
     ContentService: {
       MimeType: { TEXT: 'text' },
@@ -104,7 +130,7 @@ function fresh() {
   };
   vm.createContext(sandbox);
   vm.runInContext(CODE, sandbox);
-  return { sb: sandbox, props, cache, calls, replies, logs, state, geminiOk, resp };
+  return { sb: sandbox, props, cache, triggers, calls, replies, logs, state, geminiOk, resp };
 }
 
 function setProps(env, obj) {
@@ -240,7 +266,7 @@ t('9. 404 both -> model retired message (mentions 設定)', () => {
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.state.gemini = () => e.resp(404, { error: { code: 404, message: 'not found' } });
   e.sb.handleEvent(groupEv({ text: '查 x' }));
-  assert(replyTexts(e)[0].indexOf('退役') !== -1 && replyTexts(e)[0].indexOf('設定') !== -1, '404 msg: ' + replyTexts(e)[0]);
+  assert(replyTexts(e)[0].indexOf('退役') !== -1 && replyTexts(e)[0].indexOf('每月檢查') !== -1, '404 msg: ' + replyTexts(e)[0]);
 });
 
 t('10. missing GEMINI_API_KEY -> setup message', () => {
@@ -277,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.0', () => {
+t('14. doPost logs Bot version 1.1.1', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.0') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.1') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -409,14 +435,12 @@ t('28. group image: IMAGE_GROUP=0 silent, =1 checked', () => {
 });
 
 // ================= postbacks =================
-t('29. postback model:set updates GEMINI_MODEL, next call uses it', () => {
+t('29. postback panel:model:set is ignored (models off the panel)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   e.sb.handleEvent(postEv({ data: 'panel:model:set:primary:gemini-3.5-flash-lite' }));
-  eq(e.props.get('GEMINI_MODEL'), 'gemini-3.5-flash-lite', 'model updated');
-  assert(replyTexts(e).join(' ').indexOf('主要模型改成') !== -1, 'confirm text');
-  e.sb.handleEvent(groupEv({ text: '查 x' }));
-  assert(geminiCalls(e)[0].url.indexOf('gemini-3.5-flash-lite') !== -1, 'new model used');
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'model not changed');
+  eq(e.replies.length, 0, 'no reply');
 });
 
 t('30. postback toggle flips FETCH_LINK_TEXT and re-shows panel', () => {
@@ -485,20 +509,22 @@ t('35. await_number valid saves, invalid keeps state', () => {
   eq(e.props.get('AUTO_MIN_CHARS'), '50', 'saved 50');
 });
 
-t('36. await_model saves model name', () => {
+t('36. postback panel:model:type is ignored (models off the panel)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   e.sb.handleEvent(postEv({ data: 'panel:model:type:primary' }));
+  eq(e.replies.length, 0, 'no reply');
+  // the next message is fact-checked, not eaten as a model name
   e.sb.handleEvent(msgEv({ text: 'gemini-9-test' }));
-  eq(e.props.get('GEMINI_MODEL'), 'gemini-9-test', 'model saved');
+  eq(geminiCalls(e).length, 1, 'normal message');
 });
 
-t('37. direct command 模型 <name> updates model', () => {
+t('37. direct command 模型 <name> no longer sets the model', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   e.sb.handleEvent(msgEv({ text: '模型 gemini-3.5-flash-lite' }));
-  eq(e.props.get('GEMINI_MODEL'), 'gemini-3.5-flash-lite', 'direct model set');
-  assert(replyTexts(e).join(' ').indexOf('主要模型改成') !== -1, 'confirm');
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'model not changed');
+  eq(geminiCalls(e).length, 1, 'fact-checked as a normal message');
 });
 
 t('38. direct command 字數 <n> updates limit', () => {
@@ -556,7 +582,7 @@ t('43. flex JSON valid: all buttons postback panel:, data <= 300 chars', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner', GROUP_NAMES: JSON.stringify({ C1: '家族長輩群' }), GROUP_MEMBERS_C1: JSON.stringify({ U1: '爸爸' }) });
   const s = e.sb.settings();
-  const cards = [e.sb.panelFlex(s), e.sb.modelPickerFlex('primary', s), e.sb.modelPickerFlex('fallback', s), e.sb.groupListFlex(s), e.sb.memberFlex('C1', s)];
+  const cards = [e.sb.panelFlex(s), e.sb.groupListFlex(s), e.sb.memberFlex('C1', s)];
   cards.forEach((card, i) => {
     const dump = JSON.stringify(card);
     assert(dump.length > 100, 'card ' + i + ' non-empty');
@@ -585,6 +611,157 @@ t('44. group learning stores name + member', () => {
   e.sb.handleEvent(groupEv({ userId: 'U1', text: '查 x' }));
   eq(JSON.parse(e.props.get('GROUP_NAMES')).C1, '家族長輩群', 'group name learned');
   eq(JSON.parse(e.props.get('GROUP_MEMBERS_C1')).U1, '爸爸', 'member learned');
+});
+
+// ================= monthly model check =================
+function flashList(names) {
+  return names.map(n => ({ name: 'models/' + n, supportedGenerationMethods: ['generateContent'] }));
+}
+
+t('45. monthly check: both models still listed -> no change', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'primary untouched');
+  eq(e.props.get('GEMINI_MODEL_FALLBACK') || '', '', 'fallback untouched');
+  assert(e.logs.some(l => l.indexOf('還在，不換') !== -1), 'logged keep: ' + e.logs.join(' / '));
+});
+
+t('46. monthly check: primary retired -> newest Flash, fallback unchanged', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-4.0-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL'), 'gemini-4.0-flash', 'primary switched');
+  eq(e.props.get('GEMINI_MODEL_FALLBACK') || '', '', 'fallback untouched');
+});
+
+t('47. monthly check: fallback retired -> newest Lite', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-3.8-flash', 'gemini-4.0-flash-lite', 'gemini-2.5-flash-lite']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'primary untouched');
+  eq(e.props.get('GEMINI_MODEL_FALLBACK'), 'gemini-4.0-flash-lite', 'fallback switched');
+});
+
+t('48. monthly check: both retired -> both switch', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-4.0-flash', 'gemini-4.0-flash-lite']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL'), 'gemini-4.0-flash', 'primary switched');
+  eq(e.props.get('GEMINI_MODEL_FALLBACK'), 'gemini-4.0-flash-lite', 'fallback switched');
+});
+
+t('49. monthly check: newer Flash exists but old not retired -> NO switch', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-3.8-flash', 'gemini-4.0-flash', 'gemini-3.5-flash-lite', 'gemini-4.0-flash-lite']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'primary not switched to newer');
+  eq(e.props.get('GEMINI_MODEL_FALLBACK') || '', '', 'fallback not switched to newer');
+});
+
+t('50. monthly check: skips preview/exp/pro, picks newest stable Flash', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-4.1-flash-preview', 'gemini-4.0-flash', 'gemini-3.5-flash-lite']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL'), 'gemini-4.0-flash', 'preview skipped');
+});
+
+t('51. monthly check: verify fails for top candidate -> tries next', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-4.0-flash', 'gemini-3.9-flash', 'gemini-3.5-flash-lite']);
+  e.state.gemini = (url) => {
+    if (url.indexOf('gemini-4.0-flash') !== -1) return e.resp(500, 'err');
+    return e.resp(200, e.geminiOk('ok'));
+  };
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL'), 'gemini-3.9-flash', 'fell through to next candidate');
+});
+
+t('52. monthly check: list call fails -> no change', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.listCode = 500;
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'no change');
+});
+
+t('53. monthly check: retired but no candidate -> no change', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', GEMINI_MODEL: 'gemini-9.9-flash' });
+  e.state.modelList = flashList(['gemini-1.5-pro', 'gemini-embedding-001']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL'), 'gemini-9.9-flash', 'kept old model');
+});
+
+t('54. setupMonthlyCheck creates one trigger, twice still one', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.sb.setupMonthlyCheck();
+  e.sb.setupMonthlyCheck();
+  eq(e.triggers.length, 1, 'one trigger');
+  eq(e.triggers[0].getHandlerFunction(), 'monthlyModelCheck', 'handler name');
+  eq(e.triggers[0].day, 1, '1st of month');
+  eq(e.triggers[0].hour, 9, '9am');
+});
+
+t('55. panel has no model section', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(dump.indexOf('主要模型') === -1, 'no primary row');
+  assert(dump.indexOf('備用模型') === -1, 'no fallback row');
+  assert(dump.indexOf('panel:model') === -1, 'no model postbacks');
+  assert(dump.indexOf('panel:models') === -1, 'no models postbacks');
+});
+
+t('56. flex reply fails -> text fallback has no model command', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  e.state.replyCode = 500;
+  e.sb.handleEvent(msgEv({ text: '設定' }));
+  eq(e.replies.length, 2, 'flex attempt + text fallback');
+  const fallback = e.replies[1].messages[0].text;
+  assert(fallback.indexOf('模型 <名稱>') === -1, 'no model command in fallback');
+  assert(fallback.indexOf('主要模型：gemini-3.8-flash') !== -1, 'models still shown as info');
+});
+
+t('57. rankFlashModels orders by version, filters correctly', () => {
+  const e = fresh();
+  const models = [
+    { name: 'gemini-2.5-flash', methods: ['generateContent'] },
+    { name: 'gemini-4.0-flash-preview', methods: ['generateContent'] },
+    { name: 'gemini-3.8-flash', methods: ['generateContent'] },
+    { name: 'gemini-4.0-flash', methods: ['generateContent'] },
+    { name: 'gemini-4.0-flash-lite', methods: ['generateContent'] },
+    { name: 'gemini-1.5-pro', methods: ['generateContent'] },
+    { name: 'gemini-4.0-flash', methods: ['countTokens'] },
+  ];
+  eq(JSON.stringify(e.sb.rankFlashModels(models, false)), JSON.stringify(['gemini-4.0-flash', 'gemini-3.8-flash', 'gemini-2.5-flash']), 'primary ranking');
+  eq(JSON.stringify(e.sb.rankFlashModels(models, true)), JSON.stringify(['gemini-4.0-flash-lite']), 'lite ranking');
+});
+
+t('58. listModels parses names and methods', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k' });
+  e.state.modelList = [{ name: 'models/gemini-9.9-flash', supportedGenerationMethods: ['generateContent', 'countTokens'] }];
+  const out = e.sb.listModels();
+  eq(out.length, 1, 'one model');
+  eq(out[0].name, 'gemini-9.9-flash', 'prefix stripped');
+  assert(out[0].methods.indexOf('generateContent') !== -1, 'methods kept');
+});
+
+t('59. monthly check uses newest Lite only for fallback, never as primary', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.modelList = flashList(['gemini-4.0-flash-lite', 'gemini-3.5-flash-lite']);
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('GEMINI_MODEL') || '', '', 'primary not set to a Lite');
 });
 
 // ================= summary =================

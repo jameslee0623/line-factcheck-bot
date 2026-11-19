@@ -10,8 +10,8 @@
  * （只有擁有者可以用），面板改的就是這些屬性。
  *   LINE_CHANNEL_ACCESS_TOKEN — LINE Developers Console > Messaging API channel
  *   GEMINI_API_KEY            — Google AI Studio (aistudio.google.com) 免費申請
- *   GEMINI_MODEL              — 主要模型，預設 gemini-3.8-flash
- *   GEMINI_MODEL_FALLBACK     — 備用模型，預設 gemini-3.5-flash-lite
+ *   GEMINI_MODEL              — 主要模型，預設 gemini-3.8-flash（每月檢查自動更新，不用手動改）
+ *   GEMINI_MODEL_FALLBACK     — 備用模型，預設 gemini-3.5-flash-lite（每月檢查自動更新，不用手動改）
  *   WEBHOOK_TOKEN             — 自己訂一串亂碼，LINE webhook URL 後面加 ?token=這串，用來防偽冒
  *   OWNER_USER_ID             — 擁有者的 LINE userId；第一次在 1:1 傳送「設定」的人會自動成為擁有者
  *   SYSTEM_PROMPT             — 查核提示詞（預設見下方 SYSTEM_PROMPT_DEFAULT）
@@ -27,6 +27,13 @@
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
  *   PANEL_<ownerId>           — 設定面板的進行狀態（JSON，機器人自己寫）
  *
+ * === 模型每月檢查 ===
+ *   每月 1 號早上 9 點跑一次 monthlyModelCheck（部署後要在編輯器裡
+ *   跑一次 setupMonthlyCheck 建立排程）。只有當現在用的模型已經退役
+ *   （不在 Google 的模型清單裡），才換成最新的 Flash（主要）和
+ *   最新的 Flash-Lite（備用）。舊模型還在就什麼都不做，不會因為
+ *   出了新模型就一直換。模型不在設定面板裡，面板只能看，不能改。
+ *
  * === 觸發條件 ===
  *   群組：訊息開頭是手動觸發詞（查 / !fact / !check…），或 @ 提到機器人，
  *         或內含網址（影片連結不自動觸發），或純文字超過字數下限；
@@ -38,7 +45,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.0';
+const SCRIPT_VERSION = '1.1.1';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -401,32 +408,8 @@ function handlePanelText(token, text, userId, s) {
     return true;
   }
 
-  // 直接指令：模型 <名稱>、備用模型 <名稱>、字數 <數字>
-  let m = text.match(/^模型\s+(.+)$/);
-  if (m) {
-    const name = m[1].trim();
-    if (!name || /\s/.test(name)) {
-      replyLine(token, '模型名稱不能有空白，請再傳一次。', s);
-      return true;
-    }
-    clearPanelState(userId);
-    setProp('GEMINI_MODEL', name);
-    replyMessages(token, [{ type: 'text', text: '主要模型改成 ' + name + '。' }, panelFlex(settings())]);
-    return true;
-  }
-  m = text.match(/^備用模型\s+(.+)$/);
-  if (m) {
-    const name = m[1].trim();
-    if (!name || /\s/.test(name)) {
-      replyLine(token, '模型名稱不能有空白，請再傳一次。', s);
-      return true;
-    }
-    clearPanelState(userId);
-    setProp('GEMINI_MODEL_FALLBACK', name);
-    replyMessages(token, [{ type: 'text', text: '備用模型改成 ' + name + '。' }, panelFlex(settings())]);
-    return true;
-  }
-  m = text.match(/^字數\s+(\d+)$/);
+  // 直接指令：字數 <數字>
+  let m = text.match(/^字數\s+(\d+)$/);
   if (m) {
     const n = parseInt(m[1], 10);
     if (n < 0 || n > 10000) {
@@ -436,16 +419,6 @@ function handlePanelText(token, text, userId, s) {
     clearPanelState(userId);
     setProp('AUTO_MIN_CHARS', n);
     replyMessages(token, [{ type: 'text', text: '自動查核字數下限改成 ' + n + ' 字。' }, panelFlex(settings())]);
-    return true;
-  }
-  if (text === '模型') {
-    clearPanelState(userId);
-    replyFlex(token, modelPickerFlex('primary', s));
-    return true;
-  }
-  if (text === '備用模型') {
-    clearPanelState(userId);
-    replyFlex(token, modelPickerFlex('fallback', s));
     return true;
   }
   if (text === '群組') {
@@ -482,17 +455,6 @@ function handlePanelText(token, text, userId, s) {
     replyMessages(token, [{ type: 'text', text: '已更新。' }, panelFlex(settings())]);
     return true;
   }
-  if (st.step === 'await_model') {
-    const name = text.trim();
-    if (!name || /\s/.test(name)) {
-      replyLine(token, '模型名稱不能有空白，請再傳一次，或傳送「取消」離開。', s);
-      return true;
-    }
-    setProp(st.which === 'fallback' ? 'GEMINI_MODEL_FALLBACK' : 'GEMINI_MODEL', name);
-    clearPanelState(userId);
-    replyMessages(token, [{ type: 'text', text: (st.which === 'fallback' ? '備用' : '主要') + '模型改成 ' + name + '。' }, panelFlex(settings())]);
-    return true;
-  }
   if (st.step === 'await_triggers') {
     const list = splitList(text.replace(/，/g, ','));
     if (!list.length) {
@@ -527,24 +489,6 @@ function handlePostback(ev) {
 
   if (p[1] === 'home') {
     replyFlex(token, panelFlex(settings()));
-    return;
-  }
-  if (p[1] === 'models') {
-    replyFlex(token, modelPickerFlex(p[2] === 'fallback' ? 'fallback' : 'primary', s));
-    return;
-  }
-  if (p[1] === 'model' && p[2] === 'set') {
-    const which = p[3] === 'fallback' ? 'fallback' : 'primary';
-    const name = p[4] || '';
-    if (!name) return;
-    setProp(which === 'fallback' ? 'GEMINI_MODEL_FALLBACK' : 'GEMINI_MODEL', name);
-    replyMessages(token, [{ type: 'text', text: (which === 'fallback' ? '備用' : '主要') + '模型改成 ' + name + '。' }, panelFlex(settings())]);
-    return;
-  }
-  if (p[1] === 'model' && p[2] === 'type') {
-    const which = p[3] === 'fallback' ? 'fallback' : 'primary';
-    savePanelState(userId, { step: 'await_model', which: which });
-    replyLine(token, '請傳送新的' + (which === 'fallback' ? '備用' : '主要') + '模型名稱，例如：gemini-3.8-flash。傳送「取消」可以離開。', s);
     return;
   }
   if (p[1] === 'toggle') {
@@ -645,11 +589,6 @@ function panelFlex(s) {
   const groupNames = jsonProp('GROUP_NAMES', {});
   const groupCount = Object.keys(groupNames).length;
   return flexBubble('⚙️ 設定', '只有擁有者可以改', [
-    flexSection('模型', [
-      flexRow('主要模型', s.model, flexBtn('更換', 'panel:models:primary')),
-      flexRow('備用模型', s.fallback, flexBtn('更換', 'panel:models:fallback'))
-    ]),
-    flexSep(),
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
       flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
@@ -669,21 +608,6 @@ function panelFlex(s) {
       flexRow('回覆長度上限', s.maxReplyChars + ' 字', flexBtn('更改', 'panel:num:MAX_REPLY_CHARS')),
       flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'))
     ])
-  ]);
-}
-
-function modelPickerFlex(which, s) {
-  const cur = which === 'fallback' ? s.fallback : s.model;
-  const title = which === 'fallback' ? '更換備用模型' : '更換主要模型';
-  function modelBtn(name) {
-    const label = (name === cur ? '✓ ' : '') + name;
-    return { type: 'button', style: name === cur ? 'primary' : 'secondary', height: 'sm', action: { type: 'postback', label: label, data: 'panel:model:set:' + which + ':' + name } };
-  }
-  return flexBubble(title, '點一下就換，不用開網站', [
-    modelBtn('gemini-3.8-flash'),
-    modelBtn('gemini-3.5-flash-lite'),
-    flexBtn('輸入其他模型名稱', 'panel:model:type:' + which),
-    flexBtn('回設定', 'panel:home')
   ]);
 }
 
@@ -718,6 +642,128 @@ function memberFlex(groupId, s) {
   rows.push(flexBtn('回群組列表', 'panel:groups'));
   rows.push(flexBtn('回設定', 'panel:home'));
   return flexBubble(title, '只有勾選的人會被自動查核', rows);
+}
+
+// ---------- 模型每月檢查 ----------
+// 每月 1 號早上 9 點跑一次（排程見 setupMonthlyCheck）。
+// 只有當現在用的模型已經退役（不在 Google 的模型清單裡），才換成
+// 最新的 Flash（主要）和最新的 Flash-Lite（備用）。舊模型還在就
+// 什麼都不做，不會因為出了新模型就一直換。
+function listModels() {
+  const key = prop('GEMINI_API_KEY', '');
+  if (!key) return null;
+  try {
+    const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) {
+      console.log('列出模型失敗 ' + res.getResponseCode());
+      return null;
+    }
+    const data = JSON.parse(res.getContentText());
+    return (data.models || []).map(function (m) {
+      return { name: (m.name || '').replace(/^models\//, ''), methods: m.supportedGenerationMethods || [] };
+    }).filter(function (m) { return m.name; });
+  } catch (e) {
+    console.log('列出模型失敗: ' + e);
+    return null;
+  }
+}
+
+// 從模型清單挑最新的 Flash，排好順序。lite=true 挑 Lite 版，否則挑非 Lite 版。
+// 只要能 generateContent 的，跳過預覽版、實驗版、Pro（不是免費的）和其他用途的模型。
+// 版本號比大小：gemini-3.8-flash > gemini-3.5-flash；沒有版本號的排最後。
+function rankFlashModels(models, lite) {
+  const cands = models.filter(function (m) {
+    const lower = m.name.toLowerCase();
+    if (m.methods.indexOf('generateContent') === -1) return false;
+    if (lower.indexOf('flash') === -1) return false;
+    if (/preview|exp|pro|embedding|image|audio|tts|live/.test(lower)) return false;
+    if (lite) return lower.indexOf('lite') !== -1;
+    return lower.indexOf('lite') === -1;
+  });
+  function ver(n) {
+    const m = n.match(/(\d+)\.(\d+)/);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : [0, 0];
+  }
+  cands.sort(function (a, b) {
+    const va = ver(a.name), vb = ver(b.name);
+    return (vb[0] - va[0]) || (vb[1] - va[1]);
+  });
+  return cands.map(function (m) { return m.name; });
+}
+
+// 用一個很小的請求確認這個模型真的能用（免費額度內）。
+function verifyModel(name, key) {
+  try {
+    const res = UrlFetchApp.fetch(GEMINI_BASE + encodeURIComponent(name) + ':generateContent?key=' + encodeURIComponent(key), {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: 'ping' }] }],
+        generationConfig: { maxOutputTokens: 5 }
+      }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) return false;
+    const data = JSON.parse(res.getContentText());
+    const cand = (data.candidates || [])[0];
+    return !!(cand && cand.content && (cand.content.parts || []).some(function (p) { return p.text; }));
+  } catch (e) {
+    return false;
+  }
+}
+
+function monthlyModelCheck() {
+  const s = settings();
+  const key = prop('GEMINI_API_KEY', '');
+  const models = listModels();
+  if (!models) {
+    console.log('每月模型檢查：拿不到模型清單，這次不換');
+    return;
+  }
+  const names = models.map(function (m) { return m.name; });
+
+  if (names.indexOf(s.model) === -1) {
+    const cands = rankFlashModels(models, false);
+    let picked = '';
+    for (let i = 0; i < cands.length; i++) {
+      if (verifyModel(cands[i], key)) { picked = cands[i]; break; }
+    }
+    if (picked) {
+      console.log('每月模型檢查：' + s.model + ' 已退役，換成 ' + picked);
+      setProp('GEMINI_MODEL', picked);
+    } else {
+      console.log('每月模型檢查：' + s.model + ' 已退役，但找不到可用的 Flash 模型');
+    }
+  } else {
+    console.log('每月模型檢查：主要模型 ' + s.model + ' 還在，不換');
+  }
+
+  if (names.indexOf(s.fallback) === -1) {
+    const cands = rankFlashModels(models, true);
+    let picked = '';
+    for (let i = 0; i < cands.length; i++) {
+      if (verifyModel(cands[i], key)) { picked = cands[i]; break; }
+    }
+    if (picked) {
+      console.log('每月模型檢查：' + s.fallback + ' 已退役，換成 ' + picked);
+      setProp('GEMINI_MODEL_FALLBACK', picked);
+    } else {
+      console.log('每月模型檢查：' + s.fallback + ' 已退役，但找不到可用的 Flash-Lite 模型');
+    }
+  } else {
+    console.log('每月模型檢查：備用模型 ' + s.fallback + ' 還在，不換');
+  }
+}
+
+// 只跑一次：建立每月檢查的排程（每月 1 號早上 9 點）。
+// 跑兩次也不會重複建立。部署後要在編輯器裡選這個函數跑一次。
+function setupMonthlyCheck() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (tr) {
+    if (tr.getHandlerFunction() === 'monthlyModelCheck') ScriptApp.deleteTrigger(tr);
+  });
+  ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
+  console.log('每月模型檢查已排程：每月 1 號早上 9 點');
 }
 
 // ---------- Gemini ----------
@@ -843,7 +889,7 @@ function friendlyGeminiError(code, body) {
     if (/retryDelay|per minute/i.test(b)) return '問太快了，等一分鐘再試一次。';
     return '免費額度暫時用完了，等一會兒再試，如果還是不行就明天再試。';
   }
-  if (code === 404) return '模型名稱可能已退役，請傳送「設定」換一個模型。';
+  if (code === 404) return '模型名稱可能已退役，機器人會在每月檢查時自動換一個新的模型。';
   if (code) return '查核服務出錯了（' + code + '），晚點再試。';
   return '查核服務暫時連不上，晚點再試一次。';
 }
@@ -915,7 +961,7 @@ function replyFlex(replyToken, flex) {
     '有字圖片 群組：' + (s.imageGroup ? '開' : '關'),
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',
-    '直接改：傳送「模型 <名稱>」「備用模型 <名稱>」「字數 <數字>」「提示詞」'
+    '直接改：傳送「字數 <數字>」「提示詞」'
   ];
   return replyLine(replyToken, lines.join('\n'), s);
 }
