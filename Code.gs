@@ -20,8 +20,7 @@
  *   MAX_REPLY_CHARS           — 回覆字數上限（預設 1800；LINE 上限 5000）
  *   MAX_OUTPUT_TOKENS         — 回答長度上限（預設 1200 tokens；模型上限 65K）
  *   FETCH_LINK_TEXT           — 1=抓取連結內文再查核，0=只傳連結（預設 1）
- *   IMAGE_DM                  — 1=1:1 有字圖片查核，0=不查（預設 1）
- *   IMAGE_GROUP               — 1=群組有字圖片查核，0=不查（預設 0）
+ *   IMAGE                     — 1=有字圖片查核（1:1 和群組用同一個開關），0=不查（預設 1）
  *   GROUP_NAMES               — 自動學到的群組名單（JSON，機器人自己寫）
  *   GROUP_MEMBERS_<groupId>   — 自動學到的群組成員（JSON，機器人自己寫）
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
@@ -45,7 +44,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.1';
+const SCRIPT_VERSION = '1.1.2';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -117,8 +116,7 @@ function settings() {
     maxReplyChars: numProp('MAX_REPLY_CHARS', 1800),
     maxOutputTokens: numProp('MAX_OUTPUT_TOKENS', 1200),
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
-    imageDM: prop('IMAGE_DM', '1') !== '0',
-    imageGroup: prop('IMAGE_GROUP', '0') !== '0',
+    image: prop('IMAGE', '1') !== '0',
     ownerId: prop('OWNER_USER_ID', '')
   };
 }
@@ -348,9 +346,8 @@ function handleEvent(ev) {
   }
 
   if (msg.type === 'image') {
-    // 有字圖片：1:1 和群組各有開關；群組還要看這個人在不在自動查核名單
-    if (!isGroup && !s.imageDM) return;
-    if (isGroup && !s.imageGroup) return;
+    // 有字圖片：1:1 和群組用同一個開關；群組還要看這個人在不在自動查核名單
+    if (!s.image) return;
     if (isGroup && !isAllowed(groupId, src.userId)) return;
     const imageB64 = downloadLineImage(msg.id);
     if (!imageB64) {
@@ -428,7 +425,7 @@ function handlePanelText(token, text, userId, s) {
   }
   if (text === '提示詞') {
     savePanelState(userId, { step: 'await_prompt' });
-    replyLine(token, '請傳送新的提示詞（整段文字）。傳送「取消」可以離開。', s);
+    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞'));
     return true;
   }
 
@@ -493,8 +490,8 @@ function handlePostback(ev) {
   }
   if (p[1] === 'toggle') {
     const key = p[2];
-    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE_DM' && key !== 'IMAGE_GROUP') return;
-    const dflt = key === 'IMAGE_GROUP' ? '0' : '1';
+    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE') return;
+    const dflt = '1';
     setProp(key, prop(key, dflt) === '1' ? '0' : '1');
     replyFlex(token, panelFlex(settings()));
     return;
@@ -503,19 +500,21 @@ function handlePostback(ev) {
     const key = p[2];
     if (key !== 'AUTO_MIN_CHARS' && key !== 'MAX_REPLY_CHARS' && key !== 'MAX_OUTPUT_TOKENS') return;
     savePanelState(userId, { step: 'await_number', key: key });
+    const cur = key === 'AUTO_MIN_CHARS' ? String(s.autoMinChars)
+      : key === 'MAX_REPLY_CHARS' ? String(s.maxReplyChars) : String(s.maxOutputTokens);
     const hint = key === 'AUTO_MIN_CHARS' ? '例如：100'
       : key === 'MAX_REPLY_CHARS' ? 'LINE 上限 5000，例如：1800' : '例如：1200';
-    replyLine(token, '請傳送新的數字（' + hint + '）。傳送「取消」可以離開。', s);
+    replyFlex(token, copyFlex('更改數字', '點下面複製目前的數字，貼到輸入框再改，傳送給我（' + hint + '）。傳送「取消」可以離開。', cur, '複製目前數字'));
     return;
   }
   if (p[1] === 'prompt') {
     savePanelState(userId, { step: 'await_prompt' });
-    replyLine(token, '請傳送新的提示詞（整段文字）。傳送「取消」可以離開。', s);
+    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞'));
     return;
   }
   if (p[1] === 'triggers') {
     savePanelState(userId, { step: 'await_triggers' });
-    replyLine(token, '請傳送觸發詞，用逗號分開，例如：查,!fact,幫我查。傳送「取消」可以離開。', s);
+    replyFlex(token, copyFlex('更改觸發詞', '點下面複製目前的觸發詞，貼到輸入框再改，傳送給我（用逗號分開，例如：查,!fact,幫我查）。傳送「取消」可以離開。', s.triggers.join(','), '複製目前觸發詞'));
     return;
   }
   if (p[1] === 'groups') {
@@ -551,8 +550,8 @@ function flexBtn(label, data) {
 
 function flexRow(label, value, btn) {
   const c = [
-    { type: 'text', text: label, size: 'sm', flex: 2, gravity: 'center' },
-    { type: 'text', text: value, size: 'sm', color: '#888888', flex: 3, wrap: true, gravity: 'center' }
+    { type: 'text', text: label, size: 'sm', flex: 2, gravity: 'center', maxLines: 1 },
+    { type: 'text', text: value, size: 'sm', color: '#888888', flex: 2, wrap: true, gravity: 'center', maxLines: 1 }
   ];
   if (btn) c.push(btn);
   return { type: 'box', layout: 'horizontal', spacing: 'sm', contents: c };
@@ -565,6 +564,17 @@ function flexSection(title, rows) {
 
 function flexSep() {
   return { type: 'separator', margin: 'md' };
+}
+
+// 一張小卡片：說明 + 目前的值 + 一個複製按鈕。
+// LINE 沒辦法直接把文字預填進輸入框，點複製再貼上改是最接近的做法。
+// 目前的值也印在卡片上，舊版 LINE 不能用複製按鈕時，長按文字也可以複製。
+function copyFlex(title, instruction, currentText, copyLabel) {
+  return flexBubble(title, '點下面複製目前的值', [
+    { type: 'text', text: instruction, size: 'sm', wrap: true },
+    { type: 'text', text: currentText, size: 'sm', color: '#888888', wrap: true },
+    { type: 'button', style: 'primary', height: 'sm', action: { type: 'clipboard', label: copyLabel, clipboardText: currentText } }
+  ]);
 }
 
 function flexBubble(headerText, headerSub, bodyContents) {
@@ -592,14 +602,13 @@ function panelFlex(s) {
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
       flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
-      flexRow('有字圖片 · 1:1', s.imageDM ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE_DM')),
-      flexRow('有字圖片 · 群組', s.imageGroup ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE_GROUP')),
+      flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE')),
       flexRow('影片 · 檔案 / 連結', '暫停', null),
       flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'))
     ]),
     flexSep(),
     flexSection('查核提示詞', [
-      { type: 'text', text: s.systemPrompt.slice(0, 60) + '…', size: 'sm', color: '#888888', wrap: true },
+      { type: 'text', text: s.systemPrompt.slice(0, 60) + '…', size: 'sm', color: '#888888', wrap: true, maxLines: 1 },
       flexBtn('更改提示詞', 'panel:prompt')
     ]),
     flexSep(),
@@ -957,8 +966,7 @@ function replyFlex(replyToken, flex) {
     '備用模型：' + s.fallback,
     '字數下限：' + s.autoMinChars + ' 字',
     '連結抓取：' + (s.fetchLinkText ? '開' : '關'),
-    '有字圖片 1:1：' + (s.imageDM ? '開' : '關'),
-    '有字圖片 群組：' + (s.imageGroup ? '開' : '關'),
+    '有字圖片：' + (s.image ? '開' : '關'),
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',
     '直接改：傳送「字數 <數字>」「提示詞」'

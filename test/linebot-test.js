@@ -303,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.1', () => {
+t('14. doPost logs Bot version 1.1.2', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.1') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.2') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -423,15 +423,19 @@ t('27. video message in 1:1 -> paused note; in group -> silent', () => {
 });
 
 // ================= image toggles =================
-t('28. group image: IMAGE_GROUP=0 silent, =1 checked', () => {
+t('28. image: one IMAGE toggle for 1:1 and group', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', IMAGE_GROUP: '0' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', IMAGE: '0' });
   e.sb.handleEvent(groupEv({ message: { type: 'image', id: 'im1' } }));
-  eq(geminiCalls(e).length, 0, 'off silent');
-  e.props.set('IMAGE_GROUP', '1');
+  eq(geminiCalls(e).length, 0, 'group off silent');
+  e.sb.handleEvent(msgEv({ message: { type: 'image', id: 'im1b' } }));
+  eq(geminiCalls(e).length, 0, '1:1 off silent');
+  e.props.set('IMAGE', '1');
   e.sb.handleEvent(groupEv({ message: { type: 'image', id: 'im2' } }));
-  eq(geminiCalls(e).length, 1, 'on checked');
+  eq(geminiCalls(e).length, 1, 'group on checked');
   assert(geminiQuestion(e).indexOf('圖片') !== -1, 'image question');
+  e.sb.handleEvent(msgEv({ message: { type: 'image', id: 'im3' } }));
+  eq(geminiCalls(e).length, 2, '1:1 on checked');
 });
 
 // ================= postbacks =================
@@ -491,7 +495,12 @@ t('34. await_prompt saves SYSTEM_PROMPT, next call uses it', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   e.sb.handleEvent(postEv({ data: 'panel:prompt' }));
-  assert(replyTexts(e)[0].indexOf('傳送新的提示詞') !== -1, 'prompt ask');
+  // the prompt flow now replies with a copy card, not a plain text ask
+  assert(hasFlex(e), 'copy card shown');
+  const flex = e.replies[0].messages[0];
+  const dump = JSON.stringify(flex);
+  assert(dump.indexOf('clipboard') !== -1, 'clipboard action present');
+  assert(dump.indexOf('溫和事實查核小幫手') !== -1, 'current prompt shown in card');
   e.sb.handleEvent(msgEv({ text: '你是嚴格的查核員，只說實話。' }));
   eq(e.props.get('SYSTEM_PROMPT'), '你是嚴格的查核員，只說實話。', 'prompt saved');
   e.sb.handleEvent(groupEv({ text: '查 x' }));
@@ -729,6 +738,8 @@ t('56. flex reply fails -> text fallback has no model command', () => {
   const fallback = e.replies[1].messages[0].text;
   assert(fallback.indexOf('模型 <名稱>') === -1, 'no model command in fallback');
   assert(fallback.indexOf('主要模型：gemini-3.8-flash') !== -1, 'models still shown as info');
+  assert(fallback.indexOf('有字圖片：開') !== -1, 'single image toggle in fallback');
+  assert(fallback.indexOf('有字圖片 1:1') === -1 && fallback.indexOf('有字圖片 群組') === -1, 'no split image rows');
 });
 
 t('57. rankFlashModels orders by version, filters correctly', () => {
@@ -762,6 +773,74 @@ t('59. monthly check uses newest Lite only for fallback, never as primary', () =
   e.state.modelList = flashList(['gemini-4.0-flash-lite', 'gemini-3.5-flash-lite']);
   e.sb.monthlyModelCheck();
   eq(e.props.get('GEMINI_MODEL') || '', '', 'primary not set to a Lite');
+});
+
+t('60. panel has exactly one 有字圖片 row, one IMAGE toggle', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  eq((dump.match(/有字圖片/g) || []).length, 1, 'one image row');
+  assert(dump.indexOf('panel:toggle:IMAGE') !== -1, 'IMAGE toggle present');
+  assert(dump.indexOf('IMAGE_DM') === -1 && dump.indexOf('IMAGE_GROUP') === -1, 'no split toggles');
+});
+
+t('61. prompt preview is one line', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  const card = e.sb.panelFlex(e.sb.settings());
+  let found = null;
+  (function walk(o) {
+    if (o && typeof o === 'object') {
+      if (o.type === 'text' && typeof o.text === 'string' && o.text.indexOf('溫和事實查核小幫手') !== -1) found = o;
+      Object.keys(o).forEach(k => walk(o[k]));
+    }
+  })(card);
+  assert(found, 'prompt preview found');
+  eq(found.maxLines, 1, 'one line');
+});
+
+t('62. panel value texts are one line (maxLines 1)', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  const card = e.sb.panelFlex(e.sb.settings());
+  const vals = [];
+  (function walk(o) {
+    if (o && typeof o === 'object') {
+      if (o.type === 'text' && o.size === 'sm' && o.color === '#888888') vals.push(o);
+      Object.keys(o).forEach(k => walk(o[k]));
+    }
+  })(card);
+  assert(vals.length > 0, 'value texts found');
+  vals.forEach(v => eq(v.maxLines, 1, 'value one line: ' + (v.text || '').slice(0, 20)));
+});
+
+t('63. copy card has clipboard action with current value', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  e.sb.handleEvent(postEv({ data: 'panel:num:AUTO_MIN_CHARS' }));
+  const flex = e.replies[0].messages[0];
+  let clip = null;
+  (function walk(o) {
+    if (o && typeof o === 'object') {
+      if (o.type === 'button' && o.action && o.action.type === 'clipboard') clip = o.action;
+      Object.keys(o).forEach(k => walk(o[k]));
+    }
+  })(flex);
+  assert(clip, 'clipboard button found');
+  eq(clip.clipboardText, '100', 'current number copied');
+  e.sb.handleEvent(postEv({ data: 'panel:triggers' }));
+  const flex2 = e.replies[e.replies.length - 1].messages[0];
+  assert(JSON.stringify(flex2).indexOf('查,!fact') !== -1, 'current triggers shown');
+});
+
+t('64. toggle IMAGE flips the single property', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner', IMAGE: '1' });
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:IMAGE' }));
+  eq(e.props.get('IMAGE'), '0', 'flipped off');
+  assert(hasFlex(e), 'panel re-shown');
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:IMAGE' }));
+  eq(e.props.get('IMAGE'), '1', 'flipped back on');
 });
 
 // ================= summary =================
