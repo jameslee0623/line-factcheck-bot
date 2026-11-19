@@ -303,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.7', () => {
+t('14. doPost logs Bot version 1.1.8', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.7') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.8') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -847,20 +847,24 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.7') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.8') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.7') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.8') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
-t('66. setupMonthlyCheck is the first function (plain Run runs it)', () => {
+t('66. setupMonthlyCheck is back in the monthly-check section, not first', () => {
   const firstFn = CODE.match(/function\s+(\w+)\s*\(/);
   assert(firstFn, 'a function exists');
-  eq(firstFn[1], 'setupMonthlyCheck', 'first function is the setup');
+  assert(firstFn[1] !== 'setupMonthlyCheck', 'first function is not the setup');
+  const monthlyPos = CODE.indexOf('function monthlyModelCheck()');
+  const setupPos = CODE.indexOf('function setupMonthlyCheck()');
+  assert(monthlyPos !== -1 && setupPos !== -1, 'both functions exist');
+  assert(setupPos > monthlyPos, 'setup sits after monthlyModelCheck');
 });
 
 t('67. ensureMonthlyTrigger creates the trigger once', () => {

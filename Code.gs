@@ -1,14 +1,3 @@
-// 設定每月模型檢查：部署後不用按 Run，下一則 LINE 訊息進來時機器人自己建立排程
-// （每月 1 號早上 9 點）。這個函數是手動備用，直接按 Run 也會建立，跑兩次不會重複。
-function setupMonthlyCheck() {
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(function (tr) {
-    if (tr.getHandlerFunction() === 'monthlyModelCheck') ScriptApp.deleteTrigger(tr);
-  });
-  ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
-  console.log('每月模型檢查已排程：每月 1 號早上 9 點');
-}
-
 /**
  * LINE 群組事實查核機器人 — Google Apps Script 版
  *
@@ -55,7 +44,7 @@ function setupMonthlyCheck() {
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.7';
+const SCRIPT_VERSION = '1.1.8';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -870,7 +859,15 @@ function monthlyModelCheck() {
   }
 }
 
-// setupMonthlyCheck 在檔案最上面，直接按 Run 就會執行。
+// 手動備用：設定面板打開時會自動建立排程，這個函數是在編輯器裡手動建立用的，跑兩次不會重複。
+function setupMonthlyCheck() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (tr) {
+    if (tr.getHandlerFunction() === 'monthlyModelCheck') ScriptApp.deleteTrigger(tr);
+  });
+  ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
+  console.log('每月模型檢查已排程：每月 1 號早上 9 點');
+}
 
 // 設定面板打開時檢查排程：不存在就建立，面板最下面會顯示有沒有排程。
 // 不在每一則訊息都檢查，那樣很浪費。
