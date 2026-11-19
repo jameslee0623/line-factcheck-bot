@@ -24,7 +24,7 @@
 
 ## 第一部分：取得免費的 Gemini 金鑰（約 5 分鐘）
 
-1. 打開瀏覽器，到 **aistudio.google.com**
+1. 打開瀏覽器，到 [aistudio.google.com](https://aistudio.google.com/)
 2. 用你的 Google 帳號登入
 3. 點左邊選單的 **Get API key（取得 API 金鑰）**
 4. 點 **Create API key（建立 API 金鑰）**
@@ -34,11 +34,11 @@
 
 ## 第二部分：建立 LINE 機器人帳號（約 10 分鐘）
 
-1. 到 **manager.line.biz**，用你的 LINE 帳號登入
+1. 到 [manager.line.biz](https://manager.line.biz/)，用你的 LINE 帳號登入
 2. 點 **Create（建立）**，新增一個官方帳號
 3. 幫它取個名字，例如 `查核小幫手`，國家選台灣，完成設定
 4. 帳號建立好之後，在左邊選單找到 **Settings（設定）**，再找到 **Messaging API**，把它開啟
-5. 再到 **developers.line.biz**，用同一個 LINE 帳號登入
+5. 再到 [developers.line.biz](https://developers.line.biz/)，用同一個 LINE 帳號登入
 6. 點你的 channel（就是剛剛建立的帳號）
 7. 點頁面上方的 **Messaging API** 分頁
 8. 找到 **Channel access token**，點 **Issue（核發）**。畫面會出現一串很長的代碼——**複製下來，存到安全的地方**。這就是你的 LINE token
@@ -47,7 +47,7 @@
 
 ## 第三部分：把程式碼放進 Google Apps Script（約 10 分鐘）
 
-1. 到 **script.google.com**，用你的 Google 帳號登入
+1. 到 [script.google.com](https://script.google.com/)，用你的 Google 帳號登入
 2. 點 **New project（新增專案）**
 3. 畫面上有一些範例程式碼（開頭是 `function myFunction`）。全部選起來，刪掉
 4. 打開這個專案裡的 **`Code.gs`** 檔案，全部選起來，複製
