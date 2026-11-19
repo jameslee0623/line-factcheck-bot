@@ -171,15 +171,18 @@ function askGemini(question, imageB64) {
 function callGeminiModel(model, key, question, imageB64) {
   console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
   const res = tryOnce(model, key, question, imageB64, true);
-  // 400 可能是搜尋工具被拒：拿掉搜尋再試一次（金鑰錯誤除外，重試也沒用）
-  if (!res.ok && res.code === 400 && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
-    console.log('400，改用無搜尋重試');
+  if (res.ok) return res;
+  // 搜尋工具可能不在免費額度內（Gemini 3.x 免費版不能用 Google 搜尋）：
+  // 400 / 403 / 429 都拿掉搜尋再試一次（金鑰錯誤除外，重試也沒用）。
+  // 如果是真的額度用完，無搜尋重試也會失敗，就回傳原本的錯誤。
+  if ((res.code === 400 || res.code === 403 || res.code === 429) && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
+    console.log(res.code + '，改用無搜尋重試');
     const res2 = tryOnce(model, key, question, imageB64, false);
     if (res2.ok) {
       res2.text += '\n\n（這次無法即時搜尋，內容請再確認）';
       return res2;
     }
-    return res2;
+    return res;
   }
   return res;
 }
@@ -194,8 +197,9 @@ function tryOnce(model, key, question, imageB64, useTools) {
   }
   const payload = {
     contents: [{ parts: parts }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 1200 }
+    generationConfig: { maxOutputTokens: 1200 }
   };
+  // 注意：temperature 在 Gemini 3.6 之後的模型會被忽略，Google 說未來會直接回 400，所以不送。
   if (useTools) payload.tools = [{ googleSearch: {} }];
 
   let res;
