@@ -86,10 +86,10 @@
    把 `ABC123` 換成你自己的網址，`aB3x9qZ7kL2` 換成第三部分第 9 步你編的 `WEBHOOK_TOKEN`
 8. 回到第二部分的 LINE Developers 頁面，把這個完整網址貼到 **Webhook URL** 的欄位裡，點旁邊的 **Update（更新）** 存起來
 9. 存好之後，欄位下面會出現 **Verify（驗證）**，點它，應該會顯示成功
-10. 把 **Use webhook（使用 webhook）** 打開（**ON**）。它跟 Official Account Manager 裡「回應功能」的 **Webhook** 開關是同一個設定，兩邊會同步，在哪一邊開都可以
+10. 把 **Use webhook（使用 webhook）** 打開（**ON**）
 11. 到 Official Account Manager（[manager.line.biz](https://manager.line.biz/)）→ 你的帳號 → **設定 → 回應功能**，檢查這三個（這一步很重要，沒設好的話機器人收不到訊息）：
     - **回應模式**：選 **Bot（聊天機器人）**
-    - **Webhook**：開（就是第 10 步那個開關）
+    - **Webhook**：開（這是另一個開關，跟第 10 步的 Use webhook 都要開）
     - **自動回應訊息**：**關**。LINE 內建的自動回覆會搶走訊息，機器人就收不到了
 
 ## 第五部分：先測試（進群組之前先做）
@@ -128,7 +128,8 @@ $0。原因：
 
 | 發生什麼事 | 怎麼辦 |
 |---|---|
-| Webhook **Verify（驗證）** 失敗 | 網址錯了，或 `?token=` 後面那串跟第三部分存的 `WEBHOOK_TOKEN` 不一樣。兩個都檢查一遍再試一次。另外確認部署時的存取權是 **Anyone（所有人）**（第四部分第 4 步） |
+| Webhook **Verify（驗證）** 顯示 **302 Found** | 這是正常的，不是你的錯：Apps Script 的 `/exec` 網址一定會回 302（轉到 `script.googleusercontent.com`），LINE 不跟轉址，所以 Verify 永遠不會顯示成功。程式本身有正常執行 — 直接用第五部分的 1:1 測試傳訊息給它，有回覆就代表正常，不用管 Verify 的紅字 |
+| Webhook **Verify（驗證）** 失敗（其他錯誤） | 網址錯了，或 `?token=` 後面那串跟第三部分存的 `WEBHOOK_TOKEN` 不一樣。兩個都檢查一遍再試一次。另外確認部署時的存取權是 **Anyone（所有人）**（第四部分第 4 步） |
 | 機器人完全不回 | 在 Apps Script 裡，點左邊的**時鐘圖示**（Executions，執行紀錄）。如果裡面什麼都沒有，表示訊息根本沒傳到程式——回去檢查 webhook 網址。如果裡面有錯誤訊息，照下面幾列對照 |
 | 機器人回：今天問太多了 | 主要模型（一天 20 次）和備用模型（一天 500 次）的免費額度都用完了，明天再試 |
 | 機器人回：模型名稱可能已退役 | Google 把那個 AI 型號名稱停用了。到 Google AI Studio 看現在免費的 Flash 型號名稱，再去指令碼屬性改 `GEMINI_MODEL`（第三部分第 9 步），存檔 |
