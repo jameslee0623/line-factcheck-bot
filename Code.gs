@@ -8,7 +8,8 @@
  * 在 Apps Script「專案設定 > 指令碼屬性」加入以下屬性（不要寫死在程式碼裡）：
  *   LINE_CHANNEL_ACCESS_TOKEN — LINE Developers Console > Messaging API channel
  *   GEMINI_API_KEY            — Google AI Studio (aistudio.google.com) 免費申請
- *   GEMINI_MODEL              — 預設 gemini-3.5-flash-lite；若 AI Studio 顯示已退役，改成當前的 Flash 型號
+ *   GEMINI_MODEL              — 主要模型，預設 gemini-3.8-flash；若 AI Studio 顯示已退役，改成當前的 Flash 型號
+ *   GEMINI_MODEL_FALLBACK     — 備用模型，預設 gemini-3.5-flash-lite；主要模型額度用完或出錯時自動改用它
  *   WEBHOOK_TOKEN             — 自己訂一串亂碼，LINE webhook URL 後面加 ?token=這串，用來防偽冒
  *
  * === 觸發條件 ===
@@ -142,13 +143,33 @@ function stripTrigger(text) {
 }
 
 // ---------- Gemini ----------
+// 主要模型用滿（429）或出錯時，自動改用備用模型。兩個模型各有自己的免費額度，
+// 所以備用模型不會吃掉主要模型的額度。
 function askGemini(question, imageB64) {
-  const model = prop('GEMINI_MODEL', 'gemini-3.5-flash-lite');
+  const primary = prop('GEMINI_MODEL', 'gemini-3.8-flash');
+  const fallback = prop('GEMINI_MODEL_FALLBACK', 'gemini-3.5-flash-lite');
   const key = prop('GEMINI_API_KEY', '');
   if (!key) {
     console.log('未設定 GEMINI_API_KEY');
     return null;
   }
+
+  const res = callGeminiModel(primary, key, question, imageB64);
+  if (res.ok) return res.text;
+
+  // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）
+  const retryable = res.code === 429 || res.code === 404 || res.code >= 500;
+  if (retryable && fallback && fallback !== primary) {
+    console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
+    const res2 = callGeminiModel(fallback, key, question, imageB64);
+    if (res2.ok) return res2.text;
+    return friendlyGeminiError(res2.code);
+  }
+  return friendlyGeminiError(res.code);
+}
+
+// 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code }。
+function callGeminiModel(model, key, question, imageB64) {
   console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
   const url = GEMINI_BASE + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
 
@@ -172,16 +193,14 @@ function askGemini(question, imageB64) {
     });
   } catch (err) {
     console.log('Gemini 連線失敗: ' + err);
-    return '查核服務暫時連不上，晚點再試一次。';
+    return { ok: false, code: 0 };
   }
 
   const code = res.getResponseCode();
   const body = res.getContentText();
   if (code !== 200) {
     console.log('Gemini 錯誤 ' + code + ': ' + body.slice(0, 500));
-    if (code === 429) return '今天問太多了，達到免費額度上限，明天再試。';
-    if (code === 404) return '模型名稱可能已退役，請到 AI Studio 查現在的 Flash 型號，改 GEMINI_MODEL。';
-    return '查核服務出錯了（' + code + '），晚點再試。';
+    return { ok: false, code: code };
   }
 
   let data;
@@ -189,7 +208,7 @@ function askGemini(question, imageB64) {
     data = JSON.parse(body);
   } catch (err) {
     console.log('Gemini 回應不是 JSON: ' + body.slice(0, 300));
-    return null;
+    return { ok: false, code: 0 };
   }
   const cand = (data.candidates || [])[0];
   const text = cand && cand.content
@@ -197,7 +216,7 @@ function askGemini(question, imageB64) {
     : '';
   if (!text) {
     console.log('Gemini 沒有文字回應: ' + body.slice(0, 300));
-    return null;
+    return { ok: false, code: 0 };
   }
 
   // 來源連結（grounding 附的）
@@ -209,7 +228,15 @@ function askGemini(question, imageB64) {
   });
   let out = text.trim();
   if (sources.length) out += '\n\n資料來源：\n' + sources.slice(0, 5).join('\n');
-  return out;
+  return { ok: true, text: out };
+}
+
+// 兩個模型都失敗時，給群組看的白話訊息。
+function friendlyGeminiError(code) {
+  if (code === 429) return '今天問太多了，主要和備用模型的免費額度都用完了，明天再試。';
+  if (code === 404) return '模型名稱可能已退役，請到 AI Studio 查現在的 Flash 型號，改 GEMINI_MODEL。';
+  if (code) return '查核服務出錯了（' + code + '），晚點再試。';
+  return '查核服務暫時連不上，晚點再試一次。';
 }
 
 // ---------- LINE ----------
