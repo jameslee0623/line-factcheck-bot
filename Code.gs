@@ -96,6 +96,10 @@ function handleEvent(ev) {
   } else if (msg.type === 'image' && !isGroup) {
     // 群組裡的圖片不自動觸發（可能是家人照片）；1:1 才接受圖片查核
     imageB64 = downloadLineImage(msg.id);
+    if (!imageB64) {
+      replyLine(token, '圖片下載失敗，請再傳一次。');
+      return;
+    }
     text = '請查核這張圖片裡的內容。';
   } else {
     return; // 貼圖、影片、檔案等不處理
@@ -109,14 +113,9 @@ function handleEvent(ev) {
     return;
   }
 
-  const t0 = Date.now();
   const answer = askGemini(question, imageB64);
-  if (!answer) return; // askGemini 內部已 log
-  if (Date.now() - t0 > 50000) {
-    // replyToken 從事件產生起只有 1 分鐘有效，太慢就不要回了（回了 LINE 也會拒絕）
-    console.log('Gemini 回太慢（>50s），replyToken 可能已過期，跳過回覆');
-    return;
-  }
+  if (!answer) return; // 保險用，現在每條路都會回訊息，不應該是 null
+  // 不管多慢都試著回（replyToken 60 秒有效；過期了 LINE 會拒絕，replyLine 會記在 log 裡）
   replyLine(token, answer);
 }
 
@@ -151,14 +150,14 @@ function askGemini(question, imageB64) {
   const key = prop('GEMINI_API_KEY', '');
   if (!key) {
     console.log('未設定 GEMINI_API_KEY');
-    return null;
+    return '查核服務還沒設定好，請管理員檢查設定。';
   }
 
   const res = callGeminiModel(primary, key, question, imageB64);
   if (res.ok) return res.text;
 
-  // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）
-  const retryable = res.code === 429 || res.code === 404 || res.code >= 500;
+  // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）、0（連不上或回應壞掉）
+  const retryable = res.code === 429 || res.code === 404 || res.code === 0 || res.code >= 500;
   if (retryable && fallback && fallback !== primary) {
     console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
     const res2 = callGeminiModel(fallback, key, question, imageB64);
@@ -168,9 +167,25 @@ function askGemini(question, imageB64) {
   return friendlyGeminiError(res.code, res.body);
 }
 
-// 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code }。
+// 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
 function callGeminiModel(model, key, question, imageB64) {
   console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
+  const res = tryOnce(model, key, question, imageB64, true);
+  // 400 可能是搜尋工具被拒：拿掉搜尋再試一次（金鑰錯誤除外，重試也沒用）
+  if (!res.ok && res.code === 400 && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
+    console.log('400，改用無搜尋重試');
+    const res2 = tryOnce(model, key, question, imageB64, false);
+    if (res2.ok) {
+      res2.text += '\n\n（這次無法即時搜尋，內容請再確認）';
+      return res2;
+    }
+    return res2;
+  }
+  return res;
+}
+
+// 真正送一次請求。useTools=true 會附上 Google 搜尋。
+function tryOnce(model, key, question, imageB64, useTools) {
   const url = GEMINI_BASE + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
 
   const parts = [{ text: SYSTEM_PROMPT + '\n\n要查核的內容：\n' + question }];
@@ -179,9 +194,9 @@ function callGeminiModel(model, key, question, imageB64) {
   }
   const payload = {
     contents: [{ parts: parts }],
-    tools: [{ googleSearch: {} }],
     generationConfig: { temperature: 0.3, maxOutputTokens: 1200 }
   };
+  if (useTools) payload.tools = [{ googleSearch: {} }];
 
   let res;
   try {
@@ -193,7 +208,7 @@ function callGeminiModel(model, key, question, imageB64) {
     });
   } catch (err) {
     console.log('Gemini 連線失敗: ' + err);
-    return { ok: false, code: 0 };
+    return { ok: false, code: 0, body: '' };
   }
 
   const code = res.getResponseCode();
@@ -208,7 +223,7 @@ function callGeminiModel(model, key, question, imageB64) {
     data = JSON.parse(body);
   } catch (err) {
     console.log('Gemini 回應不是 JSON: ' + body.slice(0, 300));
-    return { ok: false, code: 0 };
+    return { ok: false, code: 0, body: '' };
   }
   const cand = (data.candidates || [])[0];
   const text = cand && cand.content
@@ -216,7 +231,7 @@ function callGeminiModel(model, key, question, imageB64) {
     : '';
   if (!text) {
     console.log('Gemini 沒有文字回應: ' + body.slice(0, 300));
-    return { ok: false, code: 0 };
+    return { ok: false, code: 0, body: '' };
   }
 
   // 來源連結（grounding 附的）
@@ -233,11 +248,13 @@ function callGeminiModel(model, key, question, imageB64) {
 
 // 兩個模型都失敗時，給群組看的白話訊息。
 // 429 有兩種，要分清楚：每分鐘太多（等一分鐘就好）、每天太多（明天再試）。
+// 先看 quotaId（PerMinute / PerDay 最準），再看 retryDelay。
 function friendlyGeminiError(code, body) {
   if (code === 429) {
     const b = body || '';
-    if (/PerMinute|retryDelay|per minute/i.test(b)) return '問太快了，等一分鐘再試一次。';
-    if (/PerDay|per day/i.test(b)) return '今天問太多了，主要和備用模型的免費額度都用完了，明天再試。';
+    if (/PerMinute/i.test(b)) return '問太快了，等一分鐘再試一次。';
+    if (/PerDay/i.test(b)) return '今天問太多了，主要和備用模型的免費額度都用完了，明天再試。';
+    if (/retryDelay|per minute/i.test(b)) return '問太快了，等一分鐘再試一次。';
     return '免費額度暫時用完了，等一會兒再試，如果還是不行就明天再試。';
   }
   if (code === 404) return '模型名稱可能已退役，請到 AI Studio 查現在的 Flash 型號，改 GEMINI_MODEL。';
