@@ -1,3 +1,14 @@
+// 設定每月模型檢查：部署後直接按上方的 Run，就會建立每月 1 號早上 9 點的排程。
+// 這個函數放在檔案最上面，所以不用選函數，按 Run 就是它。跑兩次也不會重複建立。
+function setupMonthlyCheck() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (tr) {
+    if (tr.getHandlerFunction() === 'monthlyModelCheck') ScriptApp.deleteTrigger(tr);
+  });
+  ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
+  console.log('每月模型檢查已排程：每月 1 號早上 9 點');
+}
+
 /**
  * LINE 群組事實查核機器人 — Google Apps Script 版
  *
@@ -27,8 +38,8 @@
  *   PANEL_<ownerId>           — 設定面板的進行狀態（JSON，機器人自己寫）
  *
  * === 模型每月檢查 ===
- *   每月 1 號早上 9 點跑一次 monthlyModelCheck（部署後要在編輯器裡
- *   跑一次 setupMonthlyCheck 建立排程）。只有當現在用的模型已經退役
+ *   每月 1 號早上 9 點跑一次 monthlyModelCheck（部署後直接按 Run，
+ *   檔案最上面的 setupMonthlyCheck 會建立排程）。只有當現在用的模型已經退役
  *   （不在 Google 的模型清單裡），才換成最新的 Flash（主要）和
  *   最新的 Flash-Lite（備用）。舊模型還在就什麼都不做，不會因為
  *   出了新模型就一直換。模型不在設定面板裡，面板只能看，不能改。
@@ -44,7 +55,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.3';
+const SCRIPT_VERSION = '1.1.4';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -766,16 +777,7 @@ function monthlyModelCheck() {
   }
 }
 
-// 只跑一次：建立每月檢查的排程（每月 1 號早上 9 點）。
-// 跑兩次也不會重複建立。部署後要在編輯器裡選這個函數跑一次。
-function setupMonthlyCheck() {
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(function (tr) {
-    if (tr.getHandlerFunction() === 'monthlyModelCheck') ScriptApp.deleteTrigger(tr);
-  });
-  ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
-  console.log('每月模型檢查已排程：每月 1 號早上 9 點');
-}
+// setupMonthlyCheck 在檔案最上面，直接按 Run 就會執行。
 
 // ---------- Gemini ----------
 // 主要模型用滿（429）或出錯時，自動改用備用模型。兩個模型各有自己的免費額度，
