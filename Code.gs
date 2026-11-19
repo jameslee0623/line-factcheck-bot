@@ -163,9 +163,9 @@ function askGemini(question, imageB64) {
     console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
     const res2 = callGeminiModel(fallback, key, question, imageB64);
     if (res2.ok) return res2.text;
-    return friendlyGeminiError(res2.code);
+    return friendlyGeminiError(res2.code, res2.body);
   }
-  return friendlyGeminiError(res.code);
+  return friendlyGeminiError(res.code, res.body);
 }
 
 // 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code }。
@@ -200,7 +200,7 @@ function callGeminiModel(model, key, question, imageB64) {
   const body = res.getContentText();
   if (code !== 200) {
     console.log('Gemini 錯誤 ' + code + ': ' + body.slice(0, 500));
-    return { ok: false, code: code };
+    return { ok: false, code: code, body: body };
   }
 
   let data;
@@ -232,8 +232,14 @@ function callGeminiModel(model, key, question, imageB64) {
 }
 
 // 兩個模型都失敗時，給群組看的白話訊息。
-function friendlyGeminiError(code) {
-  if (code === 429) return '今天問太多了，主要和備用模型的免費額度都用完了，明天再試。';
+// 429 有兩種，要分清楚：每分鐘太多（等一分鐘就好）、每天太多（明天再試）。
+function friendlyGeminiError(code, body) {
+  if (code === 429) {
+    const b = body || '';
+    if (/PerMinute|retryDelay|per minute/i.test(b)) return '問太快了，等一分鐘再試一次。';
+    if (/PerDay|per day/i.test(b)) return '今天問太多了，主要和備用模型的免費額度都用完了，明天再試。';
+    return '免費額度暫時用完了，等一會兒再試，如果還是不行就明天再試。';
+  }
   if (code === 404) return '模型名稱可能已退役，請到 AI Studio 查現在的 Flash 型號，改 GEMINI_MODEL。';
   if (code) return '查核服務出錯了（' + code + '），晚點再試。';
   return '查核服務暫時連不上，晚點再試一次。';
