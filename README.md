@@ -86,7 +86,11 @@
    把 `ABC123` 換成你自己的網址，`aB3x9qZ7kL2` 換成第三部分第 9 步你編的 `WEBHOOK_TOKEN`
 8. 回到第二部分的 LINE Developers 頁面，把這個完整網址貼到 **Webhook URL** 的欄位裡，點旁邊的 **Update（更新）** 存起來
 9. 存好之後，欄位下面會出現 **Verify（驗證）**，點它，應該會顯示成功
-10. 把 **Use webhook（使用 webhook）** 打開（**ON**）
+10. 把 **Use webhook（使用 webhook）** 打開（**ON**）。它跟 Official Account Manager 裡「回應功能」的 **Webhook** 開關是同一個設定，兩邊會同步，在哪一邊開都可以
+11. 到 Official Account Manager（[manager.line.biz](https://manager.line.biz/)）→ 你的帳號 → **設定 → 回應功能**，檢查這三個（這一步很重要，沒設好的話機器人收不到訊息）：
+    - **回應模式**：選 **Bot（聊天機器人）**
+    - **Webhook**：開（就是第 10 步那個開關）
+    - **自動回應訊息**：**關**。LINE 內建的自動回覆會搶走訊息，機器人就收不到了
 
 ## 第五部分：先測試（進群組之前先做）
 
