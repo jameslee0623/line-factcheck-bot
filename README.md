@@ -55,7 +55,7 @@
 6. 存檔：點磁碟片圖示，或按 Ctrl+S（Windows）／Cmd+S（Mac）
 7. 點上方的 **Untitled project**，把專案改名為 `LINE Fact Check Bot`
 8. 點左邊的**齒輪圖示**（Project Settings，專案設定）
-9. 點 **Script properties（指令碼屬性）**，再點 **Add script property（新增指令碼屬性）**。下面 5 個是必須的，一個一個加。每次輸入名稱、輸入值，再按 **Save script property**：
+9. 點 **Script properties（指令碼屬性）**，再點 **Add script property（新增指令碼屬性）**。下面 5 個，一個一個加。每次輸入名稱、輸入值，再按 **Save script property**：
 
    | 名稱（照這樣打，一個字都不能錯） | 值 |
    |---|---|
@@ -64,13 +64,10 @@
    | `GEMINI_MODEL` | `gemini-3.8-flash`（主要模型，最強的免費型號） |
    | `GEMINI_MODEL_FALLBACK` | `gemini-3.5-flash-lite`（備用模型，主要模型額度用完時自動改用它） |
    | `WEBHOOK_TOKEN` | 自己編一串亂碼英數字，例如 `aB3x9qZ7kL2`。記下來，第四部分會用到 |
-   | `LOG_SHEET_ID`（可以先不設） | 看紀錄用的試算表 ID（下面第 11 步）。不設也沒關係，機器人照常運作 |
 
    簡單講：平常都用 3.8 Flash（一天 20 次），用完了自動換成 Flash-Lite（一天 500 次），所以一天最多可以回答 520 次。
 
 10. 完成。程式碼和密碼都存好了
-
-11. （可以先不做）**看紀錄用的試算表**：Apps Script 自己的執行紀錄常常看不到 log，所以程式可以把紀錄寫進一個試算表。做法：到 [sheets.google.com](https://sheets.google.com/) 新增一個空白試算表 → 看網址，複製 `/d/` 和 `/edit` 中間那段英數字 → 回到第 9 步的指令碼屬性，新增一個叫 `LOG_SHEET_ID` 的屬性，值貼上那段 ID。之後打開這個試算表，就看得到每次的紀錄（用的模型、Gemini 錯誤全文），最多留 1000 行。
 
 ## 第四部分：發布程式碼，接上 LINE（約 5 分鐘）
 
@@ -133,7 +130,7 @@ $0。原因：
 |---|---|
 | Webhook **Verify（驗證）** 顯示 **302 Found** | 這是正常的，不是你的錯：Apps Script 的 `/exec` 網址一定會回 302（轉到 `script.googleusercontent.com`），LINE 不跟轉址，所以 Verify 永遠不會顯示成功。程式本身有正常執行 — 直接用第五部分的 1:1 測試傳訊息給它，有回覆就代表正常，不用管 Verify 的紅字 |
 | Webhook **Verify（驗證）** 失敗（其他錯誤） | 網址錯了，或 `?token=` 後面那串跟第三部分存的 `WEBHOOK_TOKEN` 不一樣。兩個都檢查一遍再試一次。另外確認部署時的存取權是 **Anyone（所有人）**（第四部分第 4 步） |
-| 機器人完全不回 | 先看你的紀錄試算表（第三部分第 11 步，有設 `LOG_SHEET_ID` 的話）。如果試算表裡完全沒有新的一行，表示訊息根本沒傳到程式——回去檢查 webhook 網址。如果試算表裡有錯誤訊息，照下面幾列對照。沒有設試算表的話，在 Apps Script 裡點左邊的**時鐘圖示**（Executions，執行紀錄），但它的 log 常常看不到 |
+| 機器人完全不回 | 在 Apps Script 裡，點左邊的**時鐘圖示**（Executions，執行紀錄）。如果裡面什麼都沒有，表示訊息根本沒傳到程式——回去檢查 webhook 網址。如果裡面有錯誤訊息，照下面幾列對照 |
 | 機器人回：今天問太多了 | 主要模型（一天 20 次）和備用模型（一天 500 次）的免費額度都用完了，明天再試 |
 | 機器人回：模型名稱可能已退役 | Google 把那個 AI 型號名稱停用了。到 Google AI Studio 看現在免費的 Flash 型號名稱，再去指令碼屬性改 `GEMINI_MODEL`（第三部分第 9 步），存檔 |
 | 私聊會回，群組不會回 | **Allow bot to join group chats** 還是關的（第二部分第 9 步），或機器人還沒被邀請進群組（第六部分） |

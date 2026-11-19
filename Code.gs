@@ -11,9 +11,6 @@
  *   GEMINI_MODEL              — 主要模型，預設 gemini-3.8-flash；若 AI Studio 顯示已退役，改成當前的 Flash 型號
  *   GEMINI_MODEL_FALLBACK     — 備用模型，預設 gemini-3.5-flash-lite；主要模型額度用完或出錯時自動改用它
  *   WEBHOOK_TOKEN             — 自己訂一串亂碼，LINE webhook URL 後面加 ?token=這串，用來防偽冒
- *   LOG_SHEET_ID（可不設）    — Google 試算表的 ID：把每次的紀錄（用的模型、Gemini 錯誤全文）寫進試算表，
- *                               因為 Apps Script 執行紀錄常常看不到 log。ID 就是試算表網址 /d/ 和 /edit 中間那段。
- *                               不設也沒關係，機器人照常運作，只是不會寫試算表。
  *
  * === 觸發條件 ===
  *   群組：訊息開頭是「查」/「!fact」/「!check」，或 @ 提到機器人，或內含網址
@@ -47,20 +44,6 @@ function prop(name, fallback) {
   return v ? v : (fallback || '');
 }
 
-// 寫 log：同時寫 console（Apps Script 執行紀錄）和 Google 試算表（LOG_SHEET_ID）。
-// 執行紀錄常常看不到 log，試算表才是可靠的紀錄；寫表失敗絕不影響回覆。
-function log_(msg) {
-  console.log(msg);
-  try {
-    const id = prop('LOG_SHEET_ID', '');
-    if (!id) return;
-    const sheet = SpreadsheetApp.openById(id).getSheets()[0];
-    if (sheet.getLastRow() === 0) sheet.appendRow(['時間', '訊息']);
-    sheet.appendRow([new Date(), msg]);
-    if (sheet.getLastRow() > 1000) sheet.deleteRows(2, sheet.getLastRow() - 1000);
-  } catch (e) { /* 記錄失敗不影響回覆 */ }
-}
-
 function textOut(s) {
   return ContentService.createTextOutput(s).setMimeType(ContentService.MimeType.TEXT);
 }
@@ -79,14 +62,14 @@ function doPost(e) {
     if (needToken) {
       const got = (e && e.parameter && e.parameter.token) || '';
       if (got !== needToken) {
-        log_('webhook token 不符，拒絕');
+        console.log('webhook token 不符，拒絕');
         return textOut('forbidden');
       }
     }
     const data = JSON.parse(body);
     (data.events || []).forEach(handleEvent);
   } catch (err) {
-    log_('doPost 錯誤: ' + err);
+    console.log('doPost 錯誤: ' + err);
   }
   return textOut('OK');
 }
@@ -166,7 +149,7 @@ function askGemini(question, imageB64) {
   const fallback = prop('GEMINI_MODEL_FALLBACK', 'gemini-3.5-flash-lite');
   const key = prop('GEMINI_API_KEY', '');
   if (!key) {
-    log_('未設定 GEMINI_API_KEY');
+    console.log('未設定 GEMINI_API_KEY');
     return '查核服務還沒設定好，請管理員檢查設定。';
   }
 
@@ -176,7 +159,7 @@ function askGemini(question, imageB64) {
   // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）、0（連不上或回應壞掉）
   const retryable = res.code === 429 || res.code === 404 || res.code === 0 || res.code >= 500;
   if (retryable && fallback && fallback !== primary) {
-    log_('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
+    console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
     const res2 = callGeminiModel(fallback, key, question, imageB64);
     if (res2.ok) return res2.text;
     return friendlyGeminiError(res2.code, res2.body);
@@ -186,14 +169,14 @@ function askGemini(question, imageB64) {
 
 // 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
 function callGeminiModel(model, key, question, imageB64) {
-  log_('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
+  console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
   const res = tryOnce(model, key, question, imageB64, true);
   if (res.ok) return res;
   // 搜尋工具可能不在免費額度內（Gemini 3.x 免費版不能用 Google 搜尋）：
   // 400 / 403 / 429 都拿掉搜尋再試一次（金鑰錯誤除外，重試也沒用）。
   // 如果是真的額度用完，無搜尋重試也會失敗，就回傳原本的錯誤。
   if ((res.code === 400 || res.code === 403 || res.code === 429) && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
-    log_(res.code + '，改用無搜尋重試');
+    console.log(res.code + '，改用無搜尋重試');
     const res2 = tryOnce(model, key, question, imageB64, false);
     if (res2.ok) {
       res2.text += '\n\n（這次無法即時搜尋，內容請再確認）';
@@ -228,14 +211,14 @@ function tryOnce(model, key, question, imageB64, useTools) {
       muteHttpExceptions: true
     });
   } catch (err) {
-    log_('Gemini 連線失敗: ' + err);
+    console.log('Gemini 連線失敗: ' + err);
     return { ok: false, code: 0, body: '' };
   }
 
   const code = res.getResponseCode();
   const body = res.getContentText();
   if (code !== 200) {
-    log_('Gemini 錯誤 ' + code + ': ' + body.slice(0, 500));
+    console.log('Gemini 錯誤 ' + code + ': ' + body.slice(0, 500));
     return { ok: false, code: code, body: body };
   }
 
@@ -243,7 +226,7 @@ function tryOnce(model, key, question, imageB64, useTools) {
   try {
     data = JSON.parse(body);
   } catch (err) {
-    log_('Gemini 回應不是 JSON: ' + body.slice(0, 300));
+    console.log('Gemini 回應不是 JSON: ' + body.slice(0, 300));
     return { ok: false, code: 0, body: '' };
   }
   const cand = (data.candidates || [])[0];
@@ -251,7 +234,7 @@ function tryOnce(model, key, question, imageB64, useTools) {
     ? (cand.content.parts || []).map(function (p) { return p.text || ''; }).join('')
     : '';
   if (!text) {
-    log_('Gemini 沒有文字回應: ' + body.slice(0, 300));
+    console.log('Gemini 沒有文字回應: ' + body.slice(0, 300));
     return { ok: false, code: 0, body: '' };
   }
 
@@ -295,7 +278,7 @@ function downloadLineImage(messageId) {
     if (res.getResponseCode() !== 200) return '';
     return Utilities.base64Encode(res.getContent());
   } catch (err) {
-    log_('下載圖片失敗: ' + err);
+    console.log('下載圖片失敗: ' + err);
     return '';
   }
 }
@@ -303,7 +286,7 @@ function downloadLineImage(messageId) {
 function replyLine(replyToken, text) {
   const token = prop('LINE_CHANNEL_ACCESS_TOKEN', '');
   if (!token) {
-    log_('未設定 LINE_CHANNEL_ACCESS_TOKEN');
+    console.log('未設定 LINE_CHANNEL_ACCESS_TOKEN');
     return;
   }
   let t = (text || '').trim();
@@ -321,9 +304,9 @@ function replyLine(replyToken, text) {
       muteHttpExceptions: true
     });
     if (res.getResponseCode() !== 200) {
-      log_('LINE reply 失敗 ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+      console.log('LINE reply 失敗 ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
     }
   } catch (err) {
-    log_('LINE reply 連線失敗: ' + err);
+    console.log('LINE reply 連線失敗: ' + err);
   }
 }
