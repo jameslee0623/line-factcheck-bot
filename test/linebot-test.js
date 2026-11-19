@@ -303,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.5', () => {
+t('14. doPost logs Bot version 1.1.6', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.5') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.6') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -847,12 +847,14 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.5') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.6') !== -1, 'version in panel');
+  assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.5') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.6') !== -1, 'version in fallback');
+  assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
 t('66. setupMonthlyCheck is the first function (plain Run runs it)', () => {
@@ -861,11 +863,11 @@ t('66. setupMonthlyCheck is the first function (plain Run runs it)', () => {
   eq(firstFn[1], 'setupMonthlyCheck', 'first function is the setup');
 });
 
-t('67. ensureMonthlyTrigger creates the trigger once, throttled by cache', () => {
+t('67. ensureMonthlyTrigger creates the trigger once', () => {
   const e = fresh();
   eq(e.triggers.length, 0, 'none at start');
-  e.sb.ensureMonthlyTrigger();
-  eq(e.triggers.length, 1, 'created');
+  eq(e.sb.ensureMonthlyTrigger(), true, 'created');
+  eq(e.triggers.length, 1, 'one trigger');
   eq(e.triggers[0].getHandlerFunction(), 'monthlyModelCheck', 'handler');
   eq(e.triggers[0].day, 1, 'day 1');
   eq(e.triggers[0].hour, 9, 'hour 9');
@@ -881,17 +883,21 @@ t('68. ensureMonthlyTrigger does nothing when the trigger exists', () => {
   eq(e.triggers.length, 1, 'still one');
 });
 
-t('69. doPost creates the missing trigger and still replies if that fails', () => {
+t('69. doPost does NOT touch triggers; opening the panel creates it', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  eq(e.triggers.length, 1, 'trigger created on first message');
+  eq(e.triggers.length, 0, 'no trigger from a message');
   eq(e.replies.length, 1, 'bot still replied');
+  e.sb.panelFlex(e.sb.settings());
+  eq(e.triggers.length, 1, 'trigger created when panel opens');
+  const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(dump.indexOf('每月檢查：已排程') !== -1, 'panel shows scheduled');
   const e2 = fresh();
-  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
-  e2.sb.ScriptApp.getProjectTriggers = function() { throw new Error('no permission'); };
-  e2.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  eq(e2.replies.length, 1, 'bot still replied when trigger setup throws');
+  e2.sb.ScriptApp.newTrigger = function() { throw new Error('no permission'); };
+  eq(e2.sb.ensureMonthlyTrigger(), false, 'setup failure returns false');
+  const dump2 = JSON.stringify(e2.sb.panelFlex(e2.sb.settings()));
+  assert(dump2.indexOf('每月檢查：未排程') !== -1, 'panel shows not scheduled when setup fails');
 });
 
 // ================= summary =================

@@ -55,7 +55,7 @@ function setupMonthlyCheck() {
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.5';
+const SCRIPT_VERSION = '1.1.6';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -266,7 +266,6 @@ function isVideoUrl(url) {
 // ---------- webhook 入口 ----------
 function doPost(e) {
   console.log('Bot version: ' + SCRIPT_VERSION);
-  ensureMonthlyTrigger(); // 排程不存在時自己建立，不用手動去編輯器按 Run
   const body = (e && e.postData && e.postData.contents) || '';
   try {
     // Apps Script 的 doPost 看不到 HTTP header，無法驗 LINE 簽名，
@@ -610,6 +609,7 @@ function flexBubble(headerText, headerSub, bodyContents) {
 function panelFlex(s) {
   const groupNames = jsonProp('GROUP_NAMES', {});
   const groupCount = Object.keys(groupNames).length;
+  const monthlyOk = ensureMonthlyTrigger(); // 打開面板時檢查排程，不存在就建立
   return flexBubble('⚙️ 設定', '只有擁有者可以改', [
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
@@ -630,7 +630,7 @@ function panelFlex(s) {
       flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'))
     ]),
     flexSep(),
-    { type: 'text', text: '版本 ' + SCRIPT_VERSION, size: 'xs', color: '#aaaaaa', align: 'center' }
+    { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程'), size: 'xs', color: '#aaaaaa', align: 'center' }
   ]);
 }
 
@@ -780,21 +780,29 @@ function monthlyModelCheck() {
 
 // setupMonthlyCheck 在檔案最上面，直接按 Run 就會執行。
 
-// 排程不存在時自己建立：部署後不用去編輯器按 Run，下一則 LINE 訊息進來就會建立。
-// 用 cache 節流，每 6 小時最多檢查一次；建立失敗也不影響回覆。
-function ensureMonthlyTrigger() {
+// 設定面板打開時檢查排程：不存在就建立，面板最下面會顯示有沒有排程。
+// 不在每一則訊息都檢查，那樣很浪費。
+function triggerExists() {
   try {
-    const cache = CacheService.getScriptCache();
-    if (cache.get('triggerChecked')) return;
-    cache.put('triggerChecked', '1', 21600);
     const triggers = ScriptApp.getProjectTriggers();
     for (let i = 0; i < triggers.length; i++) {
-      if (triggers[i].getHandlerFunction() === 'monthlyModelCheck') return;
+      if (triggers[i].getHandlerFunction() === 'monthlyModelCheck') return true;
     }
+  } catch (err) {
+    console.log('檢查每月排程失敗: ' + err);
+  }
+  return false;
+}
+
+function ensureMonthlyTrigger() {
+  try {
+    if (triggerExists()) return true;
     ScriptApp.newTrigger('monthlyModelCheck').timeBased().onMonthDay(1).atHour(9).create();
     console.log('每月模型檢查已排程：每月 1 號早上 9 點');
+    return true;
   } catch (err) {
     console.log('建立每月排程失敗: ' + err);
+    return false;
   }
 }
 
@@ -993,6 +1001,7 @@ function replyFlex(replyToken, flex) {
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',
     '版本：' + SCRIPT_VERSION,
+    '每月檢查：' + (triggerExists() ? '已排程' : '未排程'),
     '直接改：傳送「字數 <數字>」「提示詞」'
   ];
   return replyLine(replyToken, lines.join('\n'), s);
