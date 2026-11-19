@@ -149,6 +149,7 @@ function askGemini(question, imageB64) {
     console.log('未設定 GEMINI_API_KEY');
     return null;
   }
+  console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
   const url = GEMINI_BASE + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
 
   const parts = [{ text: SYSTEM_PROMPT + '\n\n要查核的內容：\n' + question }];
