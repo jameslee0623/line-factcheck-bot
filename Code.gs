@@ -218,7 +218,7 @@ function tryOnce(model, key, question, imageB64, useTools) {
   const code = res.getResponseCode();
   const body = res.getContentText();
   if (code !== 200) {
-    console.log('Gemini 錯誤 ' + code + ': ' + body.slice(0, 500));
+    console.log('Gemini 錯誤 ' + code + ': ' + body.slice(0, 2000)); // 印夠長，quotaId 才看得到
     return { ok: false, code: code, body: body };
   }
 
