@@ -44,7 +44,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.2';
+const SCRIPT_VERSION = '1.1.3';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -616,7 +616,9 @@ function panelFlex(s) {
       flexRow('選擇群組', groupCount ? groupCount + ' 個群組' : '還沒有群組記錄', flexBtn('選擇群組', 'panel:groups')),
       flexRow('回覆長度上限', s.maxReplyChars + ' 字', flexBtn('更改', 'panel:num:MAX_REPLY_CHARS')),
       flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'))
-    ])
+    ]),
+    flexSep(),
+    { type: 'text', text: '版本 ' + SCRIPT_VERSION, size: 'xs', color: '#aaaaaa', align: 'center' }
   ]);
 }
 
@@ -969,6 +971,7 @@ function replyFlex(replyToken, flex) {
     '有字圖片：' + (s.image ? '開' : '關'),
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',
+    '版本：' + SCRIPT_VERSION,
     '直接改：傳送「字數 <數字>」「提示詞」'
   ];
   return replyLine(replyToken, lines.join('\n'), s);

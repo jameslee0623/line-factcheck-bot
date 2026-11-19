@@ -303,11 +303,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.2', () => {
+t('14. doPost logs Bot version 1.1.3', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.2') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.3') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -841,6 +841,18 @@ t('64. toggle IMAGE flips the single property', () => {
   assert(hasFlex(e), 'panel re-shown');
   e.sb.handleEvent(postEv({ data: 'panel:toggle:IMAGE' }));
   eq(e.props.get('IMAGE'), '1', 'flipped back on');
+});
+
+t('65. panel shows the version number (flex + text fallback)', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
+  const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(dump.indexOf('版本 1.1.3') !== -1, 'version in panel');
+  e.state.replyCode = 500;
+  e.sb.handleEvent(msgEv({ text: '設定' }));
+  eq(e.replies.length, 2, 'flex attempt + text fallback');
+  const fallback = e.replies[1].messages[0].text;
+  assert(fallback.indexOf('版本：1.1.3') !== -1, 'version in fallback');
 });
 
 // ================= summary =================
