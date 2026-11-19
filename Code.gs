@@ -44,7 +44,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.8';
+const SCRIPT_VERSION = '1.1.9';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -58,6 +58,9 @@ const USAGE = '我是查核小幫手。用法：\n'
   + '• 輸入「查」+ 想問的內容，例如：查 台積電要被美國罰款是真的嗎\n'
   + '• 在群組 @ 我也可以\n'
   + '• 傳送「設定」可以改模型、提示詞等設定（只有擁有者）';
+
+// 加入群組時打招呼，讓大家知道機器人來了。
+const JOIN_HELLO = '大家好，我是查核小幫手。長訊息和連結我會自動查核；想查某則訊息，就回覆它並 @ 我。';
 
 const SYSTEM_PROMPT_DEFAULT = [
   '你是一個在家庭長輩群組裡的溫和事實查核小幫手。',
@@ -336,7 +339,12 @@ function handleEvent(ev) {
     handlePostback(ev);
     return;
   }
-  if (ev.type !== 'message') return; // join / leave / follow 等事件不處理
+  // 加入群組時打招呼，讓大家知道機器人來了（join 事件有 replyToken，可以回覆）
+  if (ev.type === 'join') {
+    replyLine(token, JOIN_HELLO, settings());
+    return;
+  }
+  if (ev.type !== 'message') return; // leave / follow 等事件不處理
 
   const msg = ev.message || {};
   const src = ev.source || {};
