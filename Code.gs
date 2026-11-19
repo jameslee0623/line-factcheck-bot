@@ -21,6 +21,7 @@
  *   MAX_OUTPUT_TOKENS         — 回答長度上限（預設 1200 tokens；模型上限 65K）
  *   FETCH_LINK_TEXT           — 1=抓取連結內文再查核，0=只傳連結（預設 1）
  *   IMAGE                     — 1=有字圖片查核（1:1 和群組用同一個開關），0=不查（預設 1）
+ *   TAVILY_API_KEY            — Tavily 免費搜尋金鑰（tavily.com 申請，1000 次/月不用信用卡）；沒設就照原本方式回答
  *   GROUP_NAMES               — 自動學到的群組名單（JSON，機器人自己寫）
  *   GROUP_MEMBERS_<groupId>   — 自動學到的群組成員（JSON，機器人自己寫）
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
@@ -44,7 +45,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.9';
+const SCRIPT_VERSION = '1.1.10';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -120,6 +121,7 @@ function settings() {
     maxOutputTokens: numProp('MAX_OUTPUT_TOKENS', 1200),
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
+    tavily: prop('TAVILY_API_KEY', '') !== '',
     ownerId: prop('OWNER_USER_ID', '')
   };
 }
@@ -242,6 +244,39 @@ function fetchLinkText(url) {
       .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/g, "'");
     return text.replace(/\s+/g, ' ').trim().slice(0, 4000);
   } catch (e) {
+    return '';
+  }
+}
+
+// Tavily 即時搜尋（免費 1000 次/月，不用信用卡）：把問題拿去搜尋，
+// 回傳整理好的結果文字，交給 Gemini 判斷。沒設 TAVILY_API_KEY、
+// 搜尋失敗或沒有結果都回空字串，機器人就照原本的方式回答。
+function tavilySearch(query) {
+  const key = prop('TAVILY_API_KEY', '');
+  if (!key || !query) return '';
+  try {
+    const res = UrlFetchApp.fetch('https://api.tavily.com/search', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + key },
+      payload: JSON.stringify({ query: query.slice(0, 500), search_depth: 'basic', max_results: 5, include_answer: false }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) {
+      console.log('Tavily 搜尋失敗: ' + res.getResponseCode());
+      return '';
+    }
+    const data = JSON.parse(res.getContentText());
+    const results = data.results || [];
+    if (!results.length) return '';
+    const lines = [];
+    results.forEach(function (r, i) {
+      lines.push((i + 1) + '. ' + (r.title || '') + '\n' + (r.url || '') + '\n' + (r.content || '').slice(0, 500));
+    });
+    console.log('Tavily 搜尋：找到 ' + results.length + ' 則結果');
+    return lines.join('\n\n');
+  } catch (err) {
+    console.log('Tavily 搜尋失敗: ' + err);
     return '';
   }
 }
@@ -408,7 +443,7 @@ function handleEvent(ev) {
           if (page) q = q + '\n\n連結內文：\n' + page;
         }
       }
-      const answer = askGemini(q, '', s);
+      const answer = askGemini(q, '', s, target.text);
       if (answer) replyLine(token, answer, s);
       return;
     }
@@ -431,7 +466,7 @@ function handleEvent(ev) {
       }
     }
 
-    const answer = askGemini(q, '', s);
+    const answer = askGemini(q, '', s, question);
     if (!answer) return; // 保險用，現在每條路都會回訊息，不應該是 null
     // 不管多慢都試著回（replyToken 60 秒有效；過期了 LINE 會拒絕，replyLine 會記在 log 裡）
     replyLine(token, answer, s);
@@ -703,6 +738,7 @@ function panelFlex(s) {
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
       flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
+      flexRow('即時搜尋 (Tavily)', s.tavily ? '開' : '關', null),
       flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE')),
       flexRow('影片 · 檔案 / 連結', '暫停', null),
       flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'))
@@ -906,7 +942,7 @@ function ensureMonthlyTrigger() {
 // ---------- Gemini ----------
 // 主要模型用滿（429）或出錯時，自動改用備用模型。兩個模型各有自己的免費額度，
 // 所以備用模型不會吃掉主要模型的額度。
-function askGemini(question, imageB64, s) {
+function askGemini(question, imageB64, s, searchQuery) {
   s = s || settings();
   const primary = s.model;
   const fallback = s.fallback;
@@ -916,14 +952,29 @@ function askGemini(question, imageB64, s) {
     return '查核服務還沒設定好，請管理員檢查設定。';
   }
 
-  const res = callGeminiModel(primary, key, question, imageB64, s);
+  // Tavily 即時搜尋：有設定 key 且不是圖片時，先把問題（去掉連結）拿去搜尋，
+  // 再把結果交給 Gemini。搜尋成功就不用 Google 搜尋工具（免費版 3.x 不能用，會直接 429）。
+  let q = question;
+  let searched = false;
+  if (!imageB64 && searchQuery) {
+    const queryText = searchQuery.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (queryText.length >= 10) {
+      const results = tavilySearch(queryText);
+      if (results) {
+        q = question + '\n\n即時搜尋結果（請根據這些來源判斷，並在回答裡附上來源連結）：\n' + results;
+        searched = true;
+      }
+    }
+  }
+
+  const res = callGeminiModel(primary, key, q, imageB64, s, !searched);
   if (res.ok) return res.text;
 
   // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）、0（連不上或回應壞掉）
   const retryable = res.code === 429 || res.code === 404 || res.code === 0 || res.code >= 500;
   if (retryable && fallback && fallback !== primary) {
     console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
-    const res2 = callGeminiModel(fallback, key, question, imageB64, s);
+    const res2 = callGeminiModel(fallback, key, q, imageB64, s, !searched);
     if (res2.ok) return res2.text;
     return friendlyGeminiError(res2.code, res2.body);
   }
@@ -931,15 +982,18 @@ function askGemini(question, imageB64, s) {
 }
 
 // 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
-function callGeminiModel(model, key, question, imageB64, s) {
+// useTools=false 時不附 Google 搜尋工具（Tavily 已經搜過了，或本來就沒要用）。
+function callGeminiModel(model, key, question, imageB64, s, useTools) {
   s = s || settings();
+  if (useTools === undefined) useTools = true;
   console.log('Gemini model: ' + model); // 在執行紀錄裡可以看到實際用的型號
-  const res = tryOnce(model, key, question, imageB64, true, s);
+  const res = tryOnce(model, key, question, imageB64, useTools, s);
   if (res.ok) return res;
   // 搜尋工具可能不在免費額度內（Gemini 3.x 免費版不能用 Google 搜尋）：
   // 400 / 403 / 429 都拿掉搜尋再試一次（金鑰錯誤除外，重試也沒用）。
   // 如果是真的額度用完，無搜尋重試也會失敗，就回傳原本的錯誤。
-  if ((res.code === 400 || res.code === 403 || res.code === 429) && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
+  // 第一次就沒用搜尋工具時，重試會是一模一樣的請求，所以不重試。
+  if (useTools && (res.code === 400 || res.code === 403 || res.code === 429) && res.body && !/API_KEY_INVALID|API key not valid/i.test(res.body)) {
     console.log(res.code + '，改用無搜尋重試');
     const res2 = tryOnce(model, key, question, imageB64, false, s);
     if (res2.ok) {
@@ -1094,6 +1148,7 @@ function replyFlex(replyToken, flex) {
     '備用模型：' + s.fallback,
     '字數下限：' + s.autoMinChars + ' 字',
     '連結抓取：' + (s.fetchLinkText ? '開' : '關'),
+    '即時搜尋：' + (s.tavily ? '開' : '關'),
     '有字圖片：' + (s.image ? '開' : '關'),
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',

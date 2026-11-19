@@ -40,6 +40,11 @@ function fresh() {
     listCode: 200,
     linkHtml: '<html><head><title>T</title></head><body><p>文章內文在這裡。</p></body></html>',
     linkCode: 200,
+    tavily: { results: [
+      { title: '大蒜功效研究', url: 'https://example.com/a', content: '目前沒有科學證據顯示大蒜可以治百病。' },
+      { title: '衛福部闢謠', url: 'https://example.com/b', content: '衛福部表示，吃大蒜不能治療疾病。' },
+    ] },
+    tavilyCode: 200,
     groupName: '家族長輩群',
     memberName: '爸爸',
     modelList: [
@@ -105,6 +110,10 @@ function fresh() {
           if (state.listCode !== 200) return resp(state.listCode, 'err');
           return resp(200, { models: state.modelList });
         }
+        if (url.indexOf('api.tavily.com/search') !== -1) {
+          if (state.tavily === 'throw') throw new Error('tavily down');
+          return resp(state.tavilyCode, state.tavily || { results: [] });
+        }
         // anything else: link fetch
         return resp(state.linkCode, state.linkHtml);
       },
@@ -169,6 +178,9 @@ function hasFlex(env) {
 }
 function geminiCalls(env) {
   return env.calls.filter(c => c.url.startsWith(GEMINI_BASE));
+}
+function tavilyCalls(env) {
+  return env.calls.filter(c => c.url.indexOf('api.tavily.com') !== -1);
 }
 function geminiQuestion(env, i) {
   const c = geminiCalls(env)[i || 0];
@@ -303,11 +315,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.9', () => {
+t('14. doPost logs Bot version 1.1.10', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.9') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.10') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -847,13 +859,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.9') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.10') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.9') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.10') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -990,6 +1002,73 @@ t('77. leave event stays silent', () => {
   e.sb.handleEvent({ type: 'leave', replyToken: 'tok' + tokenN, source: { type: 'group', groupId: 'C1', userId: 'U1' } });
   eq(e.replies.length, 0, 'no reply');
   eq(geminiCalls(e).length, 0, 'no Gemini call');
+});
+
+t('78. Tavily key set -> search first, Gemini without Google Search tool', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  eq(tavilyCalls(e).length, 1, 'one Tavily call');
+  const tq = JSON.parse(tavilyCalls(e)[0].opts.payload);
+  assert(tq.query.indexOf('吃大蒜可以治百病') !== -1, 'searches the question');
+  eq(tq.search_depth, 'basic', 'basic depth = 1 credit');
+  eq(geminiCalls(e).length, 1, 'one Gemini call, no retry');
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('沒有科學證據顯示大蒜可以治百病') !== -1, 'search results in question');
+  const p = JSON.parse(geminiCalls(e)[0].opts.payload);
+  assert(!p.tools, 'no Google Search tool when Tavily searched');
+});
+
+t('79. no Tavily key -> no Tavily call, Google Search tool still used', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  eq(tavilyCalls(e).length, 0, 'no Tavily call');
+  const p = JSON.parse(geminiCalls(e)[0].opts.payload);
+  assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'Google Search tool present');
+});
+
+t('80. Tavily key set + image -> no Tavily call', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.sb.handleEvent(msgEv({ message: { type: 'image', id: 'im1' } }));
+  eq(tavilyCalls(e).length, 0, 'no Tavily call for images');
+  eq(geminiCalls(e).length, 1, 'image checked');
+});
+
+t('81. Tavily fails -> falls back to Google Search tool, no crash', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.state.tavilyCode = 401;
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  eq(tavilyCalls(e).length, 1, 'Tavily tried once');
+  eq(geminiCalls(e).length, 1, 'Gemini still called');
+  const p = JSON.parse(geminiCalls(e)[0].opts.payload);
+  assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'falls back to tool');
+});
+
+t('82. question is only a link -> no Tavily call', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.sb.handleEvent(msgEv({ text: 'https://example.com/news/1' }));
+  eq(tavilyCalls(e).length, 0, 'no Tavily call for bare link');
+});
+
+t('83. panel and fallback show Tavily status', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  const dumpOff = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(dumpOff.indexOf('即時搜尋 (Tavily)') !== -1, 'row present');
+  e.state.replyCode = 500;
+  e.sb.handleEvent(msgEv({ text: '設定' }));
+  const fallbackOff = e.replies[1].messages[0].text;
+  assert(fallbackOff.indexOf('即時搜尋：關') !== -1, 'off without key');
+  const e2 = fresh();
+  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e2.state.replyCode = 500;
+  e2.sb.handleEvent(msgEv({ text: '設定' }));
+  const fallbackOn = e2.replies[1].messages[0].text;
+  assert(fallbackOn.indexOf('即時搜尋：開') !== -1, 'on with key');
 });
 
 // ================= summary =================
