@@ -37,8 +37,9 @@
  *   （不在 Google 的模型清單裡），才換成最新的 Flash（主要）和
  *   最新的 Flash-Lite（備用）。舊模型還在就什麼都不做，不會因為
  *   出了新模型就一直換。模型不在設定面板裡，面板只能看，不能改。
- *   同一次檢查也會更新不可靠來源名單（CRED-1 + uBlacklist 假新聞清單，
- *   去重後存在 DENY_0、DENY_1……；LISTS_UPDATED 是更新日期）。
+ *   同一次檢查也會更新不可靠來源名單（CRED-1 + uBlacklist 假新聞清單
+ *   + Content Farm Terminator 內容農場清單，去重後壓縮存在
+ *   DENY_0、DENY_1……；LISTS_UPDATED 是更新日期）。
  *
  * === 觸發條件 ===
  *   群組：訊息開頭是手動觸發詞（查 / !fact / !check…），或 @ 提到機器人，
@@ -51,7 +52,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.21';
+const SCRIPT_VERSION = '1.1.22';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -307,66 +308,74 @@ function isBlockedSource(url) {
 }
 
 // ---------- 不可靠來源名單 ----------
-// 每月檢查從 CRED-1（分數 ≤ 0.50，它自己的 low + mixed 分界）和
-// uBlacklist 假新聞清單下載不可靠網域，合併去重後存在 Script Properties。
-// 一格屬性最多 9KB，所以切成 DENY_0、DENY_1……；DENY_COUNT 記有幾格。
-// 再加上下面寫死的台灣內容農場清單（「封鎖內容農場」整理，2017 年，
-// 2026-10-21 更新過；沒有機器可讀的檔案可以每月下載，所以寫在程式裡）。
+// 每月檢查從三個來源下載不可靠網域，合併去重後存在 Script Properties。
+// CRED-1（分數 ≤ 0.50，它自己的 low + mixed 分界）、uBlacklist 假新聞清單、
+// Content Farm Terminator 的內容農場清單（每月更新，41,147 行）。
+// 一格屬性最多 9KB，全部屬性最多 500KB，所以名單先壓縮再切格：
+// 同一個結尾（.com、.tw……）的網域只寫一次結尾，存成「com: bomb01,buzz01; tw: cmoney,life」
+// 這種格式；讀出來再還原。DENY_0、DENY_1……是切好的格，DENY_COUNT 記有幾格。
 // 搜尋結果裡有這些網域就直接去掉，任何問題都一樣，沒有中國例外。
 const CRED1_URL = 'https://raw.githubusercontent.com/aloth/cred-1/main/data/cred1_compact.json';
 const UBLACKLIST_URL = 'https://raw.githubusercontent.com/RubenKelevra/ublacklist_fakenews/master/ublacklist-fakenews-media-light.txt';
+const TERMINATOR_URL = 'https://danny0838.github.io/content-farm-terminator/files/blocklist/content-farms.txt';
 const DENY_CHUNK = 8000; // 每格留一點空間，不要貼著 9KB 上限
+const MAX_DENY_CHARS = 450000; // 全部屬性 500KB，名單壓縮後留一點空間給其他設定
 var _denyCache = null;
-// 台灣內容農場清單（「封鎖內容農場」整理）：blogspot.* 只列出名單裡有的那幾個子網域。
-const CONTENT_FARM_DOMAINS = [
-  '163nvren.com', '360doc.com', '7jiu.com.hk', 'a-gui.com', 'aboutfighter.com',
-  'apple01.net', 'appnews.fanswong.com', 'asia01.club', 'axn2000.blogspot.com', 'babymaycry.com',
-  'baiyongqin.cc', 'bananadaily.net', 'beauties.life', 'beefun01.com', 'biginfo4u.com',
-  'bignews01.com', 'bomb01.com', 'bottle01.tw', 'bubuko.com', 'bucktop.com',
-  'bunnygo.net', 'buzz01.com', 'buzzhand.com', 'buzzhand.net', 'buzzjoker.com',
-  'buzzlife.com.tw', 'buzznews.news', 'ccolorsky.blogspot.com', 'changepw.com', 'chaxf.com',
-  'chunew.com', 'cibeiwen.com', 'circle01.com', 'ck101.com', 'classicofloves.com',
-  'clickme.net', 'cmoney.tw', 'coco01.net', 'cocomy.net', 'cocotw.net',
-  'contw.com', 'dailyfun.cc', 'dailyhearter.net', 'daleba.net', 'daliulian.net',
-  'dayhot.news', 'dayspot.net', 'discoss.com', 'dnbcw.info', 'dongqiuxiang.net',
-  'dsy39.com', 'eazon.com', 'enews.com.tw', 'eryunews.com', 'ezgoe.com',
-  'eznewlife.com', 'ezp9.com', 'ezvivi.com', 'ezvivi2.com', 'f.duckhk.com',
-  'faminereports.blogspot.com', 'fanli7.net', 'friends.hk', 'fullyu.com', 'fun.youngboysgirls.com',
-  'fun01.cc', 'fun01.net', 'funnies.online', 'funssy.com', 'funvdo01.com',
-  'getez.info', 'getfunfun.com', 'getjoyz.com', 'gigacircle.com', 'gigcasa.com',
-  'gjoyz.com', 'guowenme.cc', 'guudo.cn', 'handread.cc', 'haolookr.com',
-  'happies.news', 'happiness.beauties.life', 'happyeverydaymovie.com', 'healthalover.com', 'hehuancui.com',
-  'hk.maheshbhusal.com.np', 'hkwall.com', 'honey99.net', 'hothk.com', 'hotnews.hk',
-  'hottimes.org', 'housekook.com', 'how01.com', 'howfunny.org', 'hssszn.com',
-  'icovideos.com', 'ideapit.com', 'ifuun.com', 'ihot.news', 'ilife97.com',
-  'ilife99.com', 'immediates.net', 'ipetgroup.com', 'ireaded.com', 'ispot.news',
-  'izhentoo.cc', 'jimmyfans.com', 'juksy.com', 'justfenxiang.net', 'justhotnews.site',
-  'kan.world', 'kikinote.net', 'kknews.cc', 'kuso01.tv', 'laughbombclub.com',
-  'letu.life', 'life.com.tw', 'life.cx', 'life.tw', 'likea.ezvivi.com',
-  'line-share.tw', 'mama.tw', 'mamicode.com', 'mango01.com', 'maoanbo.net',
-  'media8.me', 'medialnk.com', 'menclub.co', 'metalballs.com', 'mili010.com',
-  'mili010.net', 'mimi186.com', 'ml.design-fabrica.com', 'ml.yubhar.com', 'money83.com',
-  'moneyaaa.com', 'muratify.cc', 'myfbshare.net', 'mytimes.org', 'news.95lady.com',
-  'news.knowing.asia', 'news.qzapp.net', 'news01.cc', 'newstube01.tv', 'novelfeed.com',
-  'ohwonews.com', 'onefunnyjoke.com', 'onnewlife.com', 'orange01.org', 'pcasg.com',
-  'peopleinsider.blogspot.com', 'peopleinsider.net', 'picallies.com', 'play01.cc', 'plays01.com',
-  'post01.com', 'programgo.com', 'ptt01.cc', 'pttbook.com', 'push01.com',
-  'push01.net', 'qianqu.cc', 'qilook.com', 'qiqu.news', 'quiz321.com',
-  'qzapp.net', 'read01.com', 'reg.youthwant.com.tw', 'share.youthwant.com.tw', 'share001.com',
-  'share001.net', 'share2fb.net', 'shareba.com', 'shareonion.com', 'sharetify.com',
-  'sk2zone.com', 'spicemami.com', 'story.bazzfly.com', 'superfun-e.com', 'teepr.com',
-  'thefundaily.com', 'thegreatdaily.com', 'thegreendaily.net', 'thehealthdaily.org', 'tipelse.com',
-  'toments.com', 'ttshow.tw', 'tw.anyelse.com', 'tw.jdkartsports.nl', 'twgreatdaily.com',
-  'vdoobv.com', 'video-lab.net', 'viralane.com', 'watchinese.com', 'whatfunny.org',
-  'wholehk.com', 'whyhow.online', 'womanaaa.com', 'wonder4.co', 'ww.happy123.org',
-  'ww.share001.org', 'xianso.com', 'xibao.tw', 'xuxianghui.cc', 'xuxinfang.xyz',
-  'yibihan.net', 'ymiit.com', 'yourbabb.com', 'yourfacts.club', 'yourhope.info',
-  'youthwant.com', 'youthwant.com.tw', 'youthwant.ufc.com.tw', 'youthwant.xnnow.com', 'zhentoo.com',
-  'zhentoo.net', 'zhoucuimei.cc', 'zhulinlin.net'
-];
+
+// 解析 Content Farm Terminator 的內容農場清單（一行一個網域）。
+// 丟掉的東西：# 註解、/^ 開頭的正則規則、IP、帶路徑的規則（有 / 的）、
+// pixnet、fc2、wordpress 上面的單一垃圾部落格（幾千個，幾乎不會出現在搜尋結果）、
+// 純數字的網域（218113.com 這種用完就丟的 SEO 網域）。
+// blogspot 上面的只有兩個，留著。
+function parseTerminatorList(text) {
+  const out = [];
+  const sharedHost = /\.(pixnet\.net|blog\.fc2\.com|wordpress\.com)$/;
+  (text || '').split('\n').forEach(function (line) {
+    const token = line.trim().split(/\s+/)[0] || '';
+    if (!token || token.charAt(0) === '#' || token.charAt(0) === '/') return;
+    if (token.indexOf('/') !== -1) return;
+    const d = token.toLowerCase();
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(d)) return; // IP
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d)) return;
+    if (sharedHost.test(d)) return;
+    if (/^\d+\.[a-z]+$/.test(d)) return; // 純數字網域
+    out.push(d);
+  });
+  return out;
+}
+
+// 名單壓縮：同結尾的網域共用結尾，存成「com: bomb01,buzz01; tw: cmoney,life」。
+// 舊格式（純逗號分隔）沒有冒號，讀的時候照舊處理，不用搬家。
+function encodeDenylist(domains) {
+  const groups = {};
+  domains.forEach(function (d) {
+    const dot = d.lastIndexOf('.');
+    if (dot === -1) return;
+    const tld = d.slice(dot + 1);
+    const name = d.slice(0, dot);
+    (groups[tld] = groups[tld] || []).push(name);
+  });
+  return Object.keys(groups).sort().map(function (tld) {
+    return tld + ':' + groups[tld].join(',');
+  }).join(';');
+}
+function decodeDenylist(text) {
+  if (!text) return [];
+  if (text.indexOf(':') === -1) return text.split(',').filter(Boolean);
+  const out = [];
+  text.split(';').forEach(function (g) {
+    const colon = g.indexOf(':');
+    if (colon === -1) return;
+    const tld = g.slice(0, colon);
+    g.slice(colon + 1).split(',').forEach(function (name) {
+      if (name) out.push(name + '.' + tld);
+    });
+  });
+  return out;
+}
 function updateCredibilityLists() {
   const found = {};
-  let cred1n = 0, ubn = 0;
+  let cred1n = 0, ubn = 0, farmn = 0;
   try {
     const res = UrlFetchApp.fetch(CRED1_URL, { muteHttpExceptions: true });
     if (res.getResponseCode() === 200) {
@@ -394,12 +403,32 @@ function updateCredibilityLists() {
   } catch (e) {
     console.log('uBlacklist 下載失敗: ' + e);
   }
+  try {
+    const res = UrlFetchApp.fetch(TERMINATOR_URL, { muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      parseTerminatorList(res.getContentText()).forEach(function (d) { found[d] = true; farmn++; });
+    } else {
+      console.log('內容農場清單下載失敗: ' + res.getResponseCode());
+    }
+  } catch (e) {
+    console.log('內容農場清單下載失敗: ' + e);
+  }
+  // 子網域多餘：如果上一層已經在名單裡（例如 youthwant.com.tw 在，
+  // reg.youthwant.com.tw 就不用存），比對時本來就會往上找。
+  Object.keys(found).forEach(function (d) {
+    const dot = d.indexOf('.');
+    if (dot !== -1 && found[d.slice(dot + 1)]) delete found[d];
+  });
   const domains = Object.keys(found).sort();
   if (!domains.length) {
-    console.log('可信度名單更新失敗：兩個來源都沒有拿到網域，舊名單不動');
+    console.log('可信度名單更新失敗：三個來源都沒有拿到網域，舊名單不動');
     return false;
   }
-  const joined = domains.join(',');
+  const joined = encodeDenylist(domains);
+  if (joined.length > MAX_DENY_CHARS) {
+    console.log('可信度名單太大（' + joined.length + ' 字），超過上限，舊名單不動');
+    return false;
+  }
   const chunks = [];
   for (let i = 0; i < joined.length; i += DENY_CHUNK) chunks.push(joined.slice(i, i + DENY_CHUNK));
   const props = PropertiesService.getScriptProperties();
@@ -409,19 +438,17 @@ function updateCredibilityLists() {
   props.setProperty('DENY_COUNT', String(chunks.length));
   props.setProperty('LISTS_UPDATED', new Date().toISOString().slice(0, 10));
   _denyCache = null;
-  console.log('可信度名單已更新：CRED-1 ' + cred1n + ' 個，uBlacklist ' + ubn + ' 個，去重後 ' + domains.length + ' 個，' + chunks.length + ' 格');
+  console.log('可信度名單已更新：CRED-1 ' + cred1n + ' 個，uBlacklist ' + ubn + ' 個，內容農場 ' + farmn + ' 個，去重後 ' + domains.length + ' 個，' + chunks.length + ' 格');
   return true;
 }
 function getDenylist() {
   if (_denyCache) return _denyCache;
   const map = {};
-  CONTENT_FARM_DOMAINS.forEach(function (d) { map[d] = true; });
   const props = PropertiesService.getScriptProperties();
   const count = parseInt(props.getProperty('DENY_COUNT') || '0', 10) || 0;
-  for (let i = 0; i < count; i++) {
-    const chunk = props.getProperty('DENY_' + i) || '';
-    chunk.split(',').forEach(function (d) { if (d) map[d] = true; });
-  }
+  const joined = [];
+  for (let i = 0; i < count; i++) joined.push(props.getProperty('DENY_' + i) || '');
+  decodeDenylist(joined.join('')).forEach(function (d) { map[d] = true; });
   _denyCache = map;
   return map;
 }

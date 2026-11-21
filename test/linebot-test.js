@@ -123,6 +123,10 @@ function fresh() {
           if (state.ublocklist === 'throw') throw new Error('ublocklist down');
           return resp(state.ublocklistCode || 200, state.ublocklist || '');
         }
+        if (url.indexOf('content-farms.txt') !== -1) {
+          if (state.terminator === 'throw') throw new Error('terminator down');
+          return resp(state.terminatorCode || 200, state.terminator || '');
+        }
         // anything else: link fetch
         return resp(state.linkCode, state.linkHtml);
       },
@@ -192,7 +196,7 @@ function exaCalls(env) {
   return env.calls.filter(c => c.url.indexOf('api.exa.ai') !== -1);
 }
 function listCalls(env) {
-  return env.calls.filter(c => c.url.indexOf('cred1_compact.json') !== -1 || c.url.indexOf('ublacklist') !== -1);
+  return env.calls.filter(c => c.url.indexOf('cred1_compact.json') !== -1 || c.url.indexOf('ublacklist') !== -1 || c.url.indexOf('content-farms') !== -1);
 }
 function geminiQuestion(env, i) {
   const c = geminiCalls(env)[i || 0];
@@ -327,11 +331,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.21', () => {
+t('14. doPost logs Bot version 1.1.22', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.21') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.22') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -871,13 +875,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.21') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.22') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.21') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.22') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1371,10 +1375,10 @@ t('101. all search results blocked -> falls back to Google Search tool', () => {
 // ================= summary =================
 t('104. list update merges CRED-1 + uBlacklist, dedups, chunks at 8000', () => {
   const e = fresh();
-  // 800 個 CRED-1 網域（分數 0.1 收，0.6 不收）+ uBlacklist 100 個，其中 50 個重複
+  // 1500 個 CRED-1 網域（分數 0.1 收，0.6 不收）+ uBlacklist 100 個，其中 50 個重複
   const cred1 = {};
   const expected = {};
-  for (let i = 0; i < 800; i++) { cred1['bad' + i + '.com'] = { c: 'u', s: 0.1 }; expected['bad' + i + '.com'] = true; }
+  for (let i = 0; i < 1500; i++) { cred1['bad' + i + '.com'] = { c: 'u', s: 0.1 }; expected['bad' + i + '.com'] = true; }
   cred1['ok-site.com'] = { c: 'u', s: 0.6 };
   cred1['mixed-site.com'] = { c: 'm', s: 0.5 };
   expected['mixed-site.com'] = true;
@@ -1384,7 +1388,7 @@ t('104. list update merges CRED-1 + uBlacklist, dedups, chunks at 8000', () => {
   e.state.cred1 = cred1;
   e.state.ublocklist = ub;
   eq(e.sb.updateCredibilityLists(), true, 'update ok');
-  eq(listCalls(e).length, 2, 'both lists fetched');
+  eq(listCalls(e).length, 3, 'all three lists fetched');
   const count = parseInt(e.props.get('DENY_COUNT'), 10);
   assert(count >= 2, 'chunked: ' + count);
   let joined = '';
@@ -1393,10 +1397,10 @@ t('104. list update merges CRED-1 + uBlacklist, dedups, chunks at 8000', () => {
     assert(chunk.length <= 8000, 'chunk <= 8000: ' + chunk.length);
     joined += chunk;
   }
-  const got = joined.split(',').sort();
+  const got = e.sb.decodeDenylist(joined).sort();
   const want = Object.keys(expected).sort();
   eq(JSON.stringify(got), JSON.stringify(want), 'deduped set matches');
-  assert(!joined.split(',').includes('ok-site.com'), 'score 0.6 excluded');
+  assert(!e.sb.decodeDenylist(joined).includes('ok-site.com'), 'score 0.6 excluded');
   eq(e.props.get('LISTS_UPDATED'), new Date().toISOString().slice(0, 10), 'date stamped');
 });
 
@@ -1405,7 +1409,7 @@ t('105. one list down -> other still used; both down -> old list kept', () => {
   e.state.cred1 = 'throw';
   e.state.ublocklist = '*://*.ub1.com/*\n*://ub2.com/*\n';
   eq(e.sb.updateCredibilityLists(), true, 'update ok with one source');
-  eq(e.props.get('DENY_0'), 'ub1.com,ub2.com', 'only ublocklist domains');
+  eq(e.props.get('DENY_0'), 'com:ub1,ub2', 'only ublocklist domains (encoded)');
   // 兩個都壞：回 false，舊名單不動
   const e2 = fresh();
   setProps(e2, { DENY_COUNT: '1', DENY_0: 'old.com', LISTS_UPDATED: '2026-10-01' });
@@ -1454,37 +1458,83 @@ t('109. monthly model check also updates the lists', () => {
   e.state.ublocklist = '';
   e.sb.monthlyModelCheck();
   eq(e.props.get('DENY_COUNT'), '1', 'lists updated by monthly check');
-  eq(e.props.get('DENY_0'), 'bad1.com', 'domain stored');
+  eq(e.props.get('DENY_0'), 'com:bad1', 'domain stored (encoded)');
   assert(e.props.get('LISTS_UPDATED'), 'date stamped');
   assert(e.logs.some(l => l.indexOf('可信度名單已更新') !== -1), 'update logged: ' + e.logs.join(' / '));
 });
 
-t('110. content-farm list: 218 entries, well-formed, no dupes, 14 .tw', () => {
-  const m = CODE.match(/const CONTENT_FARM_DOMAINS = \[([\s\S]*?)\];/);
-  assert(m, 'array found in Code.gs');
-  const items = m[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
-  eq(items.length, 218, 'count pinned (add a domain -> update this number)');
-  eq(new Set(items).size, items.length, 'no duplicates');
-  items.forEach(d => assert(/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(d), 'bad domain: ' + d));
-  eq(items.filter(d => d.endsWith('.tw') || d.endsWith('.com.tw')).length, 14, '.tw count');
+t('110. terminator parser: keeps farms, drops spam blogs, numeric, IPs, regex', () => {
+  const e = fresh();
+  const text = [
+    '# Title: Content Farm Filters',
+    '# Last modified: 2026-11-15T23:30:27+00:00',
+    '',
+    '/^https?://(?!www\\.)(?:[\\w-]+\\.)+y2mate\\.com//',
+    'bomb01.com',
+    'cmoney.tw',
+    'enews.com.tw',
+    'youthwant.com.tw',
+    'reg.youthwant.com.tw',
+    'axn2000.blogspot.com',
+    'a0cuy6cmk2.pixnet.net',
+    'a2am4028ck.blog.fc2.com',
+    'a4o6u8.wordpress.com',
+    '218113.com',
+    '10000.tw',
+    '163.com',
+    '03tity.me  #redirects to fatbean.xyz',
+    '165.227.24.198',
+    'against24.blogspot.*',
+    'BOMB01.COM',
+  ].join('\n');
+  const got = [...new Set(e.sb.parseTerminatorList(text))].sort();
+  eq(got.join(','), '03tity.me,axn2000.blogspot.com,bomb01.com,cmoney.tw,enews.com.tw,reg.youthwant.com.tw,youthwant.com.tw', 'kept set');
 });
 
-t('111. farm domains blocked with no stored list, merged with stored list', () => {
-  const e = fresh(); // no DENY_* props at all
-  assert(e.sb.isDenylisted('https://www.bomb01.com/a'), 'bomb01');
-  assert(e.sb.isDenylisted('https://cmoney.tw/a'), 'cmoney.tw');
-  assert(e.sb.isDenylisted('https://www.life.com.tw/a'), 'life.com.tw');
-  assert(e.sb.isDenylisted('https://news.bomb01.com/a'), 'farm subdomain');
+t('111. denylist encode/decode round-trips, plain format still reads', () => {
+  const e = fresh();
+  const domains = ['bomb01.com', 'cmoney.tw', 'enews.com.tw', 'youthwant.com.tw', 'infowars.com'];
+  const enc = e.sb.encodeDenylist(domains.slice().sort());
+  eq(e.sb.decodeDenylist(enc).sort().join(','), domains.slice().sort().join(','), 'round-trip');
+  assert(enc.length < domains.join(',').length, 'compressed: ' + enc);
+  eq(e.sb.decodeDenylist('ub1.com,ub2.com').join(','), 'ub1.com,ub2.com', 'plain fallback');
+  setProps(e, { DENY_COUNT: '1', DENY_0: enc });
+  assert(e.sb.isDenylisted('https://bomb01.com/a'), 'bomb01 blocked');
+  assert(e.sb.isDenylisted('https://www.cmoney.tw/a'), 'cmoney.tw blocked');
+  assert(e.sb.isDenylisted('https://reg.youthwant.com.tw/a'), 'subdomain via parent');
   assert(!e.sb.isDenylisted('https://www.mohw.gov.tw/a'), 'clean not blocked');
-  const e2 = fresh();
-  setProps(e2, { DENY_COUNT: '1', DENY_0: 'infowars.com' });
-  assert(e2.sb.isDenylisted('https://infowars.com/a'), 'stored list still works');
-  assert(e2.sb.isDenylisted('https://bomb01.com/a'), 'farm list merged in');
 });
 
-t('112. content-farm search result dropped end to end', () => {
+t('112. monthly update merges terminator list, dedups subdomains', () => {
+  const e = fresh();
+  const cred1 = {};
+  const expected = {};
+  for (let i = 0; i < 10; i++) { cred1['bad' + i + '.com'] = { c: 'u', s: 0.1 }; expected['bad' + i + '.com'] = true; }
+  e.state.cred1 = cred1;
+  e.state.ublocklist = '*://*.ub1.com/*\n';
+  expected['ub1.com'] = true;
+  e.state.terminator = [
+    'bomb01.com', 'cmoney.tw', 'youthwant.com.tw', 'reg.youthwant.com.tw',
+    'a0cuy6cmk2.pixnet.net', '218113.com', '165.227.24.198',
+  ].join('\n');
+  expected['bomb01.com'] = true; expected['cmoney.tw'] = true; expected['youthwant.com.tw'] = true;
+  assert(e.sb.updateCredibilityLists(), 'returns true');
+  eq(listCalls(e).length, 3, 'all three lists fetched');
+  const count = parseInt(e.props.get('DENY_COUNT') || '0', 10);
+  let joined = '';
+  for (let i = 0; i < count; i++) joined += e.props.get('DENY_' + i) || '';
+  const got = {};
+  e.sb.decodeDenylist(joined).forEach(d => { got[d] = true; });
+  eq(Object.keys(got).sort().join(','), Object.keys(expected).sort().join(','), 'merged set');
+  assert(!got['reg.youthwant.com.tw'], 'subdomain deduped (parent in set)');
+  assert(!got['a0cuy6cmk2.pixnet.net'] && !got['218113.com'], 'parser drops kept out');
+  assert(e.logs.some(l => l.indexOf('內容農場 4 個') !== -1), 'log counts terminator: ' + e.logs.join(' / '));
+});
+
+t('113. terminator farm result dropped end to end', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  setProps(e, { DENY_COUNT: '1', DENY_0: e.sb.encodeDenylist(['bomb01.com']) });
   e.state.exa = { results: [
     { title: '農場文章', url: 'https://bomb01.com/a', text: '吃大蒜可以治百病。' },
     { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
@@ -1493,6 +1543,20 @@ t('112. content-farm search result dropped end to end', () => {
   const q = geminiQuestion(e, 0);
   assert(q.indexOf('衛福部表示沒有證據') !== -1, 'clean kept');
   assert(q.indexOf('bomb01.com') === -1, 'farm dropped');
+});
+
+t('114. over-budget list keeps the old list', () => {
+  const e = fresh();
+  setProps(e, { DENY_COUNT: '1', DENY_0: 'com:oldfarm', LISTS_UPDATED: '2026-10-01' });
+  const lines = [];
+  for (let i = 0; i < 30000; i++) lines.push('farmdomain' + i + '.example');
+  e.state.terminator = lines.join('\n');
+  e.state.cred1 = {};
+  e.state.ublocklist = '';
+  assert(!e.sb.updateCredibilityLists(), 'returns false');
+  eq(e.props.get('DENY_0'), 'com:oldfarm', 'old list untouched');
+  eq(e.props.get('DENY_COUNT'), '1', 'count untouched');
+  eq(e.props.get('LISTS_UPDATED'), '2026-10-01', 'old date kept');
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
