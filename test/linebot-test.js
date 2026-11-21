@@ -115,6 +115,14 @@ function fresh() {
           if (state.exa === 'throw') throw new Error('exa down');
           return resp(state.exaCode, state.exa || { results: [] });
         }
+        if (url.indexOf('cred1_compact.json') !== -1) {
+          if (state.cred1 === 'throw') throw new Error('cred1 down');
+          return resp(state.cred1Code || 200, state.cred1 || {});
+        }
+        if (url.indexOf('ublacklist-fakenews-media-light.txt') !== -1) {
+          if (state.ublocklist === 'throw') throw new Error('ublocklist down');
+          return resp(state.ublocklistCode || 200, state.ublocklist || '');
+        }
         // anything else: link fetch
         return resp(state.linkCode, state.linkHtml);
       },
@@ -182,6 +190,9 @@ function geminiCalls(env) {
 }
 function exaCalls(env) {
   return env.calls.filter(c => c.url.indexOf('api.exa.ai') !== -1);
+}
+function listCalls(env) {
+  return env.calls.filter(c => c.url.indexOf('cred1_compact.json') !== -1 || c.url.indexOf('ublacklist') !== -1);
 }
 function geminiQuestion(env, i) {
   const c = geminiCalls(env)[i || 0];
@@ -316,11 +327,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.19', () => {
+t('14. doPost logs Bot version 1.1.20', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.19') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.20') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -860,13 +871,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.19') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.20') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.19') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.20') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1358,6 +1369,96 @@ t('101. all search results blocked -> falls back to Google Search tool', () => {
 });
 
 // ================= summary =================
+t('104. list update merges CRED-1 + uBlacklist, dedups, chunks at 8000', () => {
+  const e = fresh();
+  // 800 個 CRED-1 網域（分數 0.1 收，0.6 不收）+ uBlacklist 100 個，其中 50 個重複
+  const cred1 = {};
+  const expected = {};
+  for (let i = 0; i < 800; i++) { cred1['bad' + i + '.com'] = { c: 'u', s: 0.1 }; expected['bad' + i + '.com'] = true; }
+  cred1['ok-site.com'] = { c: 'u', s: 0.6 };
+  cred1['mixed-site.com'] = { c: 'm', s: 0.5 };
+  expected['mixed-site.com'] = true;
+  let ub = '# comment\n/regex-rule/\n@allow\n';
+  for (let i = 0; i < 50; i++) { ub += '*://*.bad' + i + '.com/*\n'; }
+  for (let i = 0; i < 50; i++) { ub += '*://ub' + i + '.com/*\n'; expected['ub' + i + '.com'] = true; }
+  e.state.cred1 = cred1;
+  e.state.ublocklist = ub;
+  eq(e.sb.updateCredibilityLists(), true, 'update ok');
+  eq(listCalls(e).length, 2, 'both lists fetched');
+  const count = parseInt(e.props.get('DENY_COUNT'), 10);
+  assert(count >= 2, 'chunked: ' + count);
+  let joined = '';
+  for (let i = 0; i < count; i++) {
+    const chunk = e.props.get('DENY_' + i) || '';
+    assert(chunk.length <= 8000, 'chunk <= 8000: ' + chunk.length);
+    joined += chunk;
+  }
+  const got = joined.split(',').sort();
+  const want = Object.keys(expected).sort();
+  eq(JSON.stringify(got), JSON.stringify(want), 'deduped set matches');
+  assert(!joined.split(',').includes('ok-site.com'), 'score 0.6 excluded');
+  eq(e.props.get('LISTS_UPDATED'), new Date().toISOString().slice(0, 10), 'date stamped');
+});
+
+t('105. one list down -> other still used; both down -> old list kept', () => {
+  const e = fresh();
+  e.state.cred1 = 'throw';
+  e.state.ublocklist = '*://*.ub1.com/*\n*://ub2.com/*\n';
+  eq(e.sb.updateCredibilityLists(), true, 'update ok with one source');
+  eq(e.props.get('DENY_0'), 'ub1.com,ub2.com', 'only ublocklist domains');
+  // 兩個都壞：回 false，舊名單不動
+  const e2 = fresh();
+  setProps(e2, { DENY_COUNT: '1', DENY_0: 'old.com', LISTS_UPDATED: '2026-10-01' });
+  e2.state.cred1 = 'throw';
+  e2.state.ublocklist = 'throw';
+  eq(e2.sb.updateCredibilityLists(), false, 'both down -> false');
+  eq(e2.props.get('DENY_0'), 'old.com', 'old list kept');
+  eq(e2.props.get('LISTS_UPDATED'), '2026-10-01', 'old date kept');
+});
+
+t('106. isDenylisted: exact, subdomain, not listed', () => {
+  const e = fresh();
+  setProps(e, { DENY_COUNT: '1', DENY_0: 'infowars.com,naturalnews.com' });
+  assert(e.sb.isDenylisted('https://www.infowars.com/a'), 'exact');
+  assert(e.sb.isDenylisted('https://news.naturalnews.com/a'), 'subdomain');
+  assert(!e.sb.isDenylisted('https://www.mohw.gov.tw/a'), 'not listed');
+  assert(!e.sb.isDenylisted('not-a-url'), 'not a url');
+  assert(!e.sb.isDenylisted('https://infowars.com.evil.com/a'), 'suffix trick not matched');
+});
+
+t('107. denylisted search result dropped, clean result kept', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test', DENY_COUNT: '1', DENY_0: 'infowars.com,naturalnews.com' });
+  e.state.exa = { results: [
+    { title: 'Infowars', url: 'https://www.infowars.com/a', text: '大蒜可以治百病。' },
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('衛福部表示沒有證據') !== -1, 'clean kept');
+  assert(q.indexOf('infowars.com') === -1, 'denylisted dropped');
+});
+
+t('108. Taiwan fact-checkers are tier 1', () => {
+  const e = fresh();
+  eq(e.sb.sourceTier('https://tfc-taiwan.org.tw/article/1'), 1, 'TFC');
+  eq(e.sb.sourceTier('https://www.mygopen.com/2026/11/1.html'), 1, 'MyGoPen');
+  eq(e.sb.sourceTier('https://cofacts.tw/article/abc'), 1, 'Cofacts');
+  eq(e.sb.sourceTier('https://www.mohw.gov.tw/news/1'), 1, 'gov still tier 1');
+});
+
+t('109. monthly model check also updates the lists', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k' });
+  e.state.cred1 = { 'bad1.com': { c: 'u', s: 0.1 } };
+  e.state.ublocklist = '';
+  e.sb.monthlyModelCheck();
+  eq(e.props.get('DENY_COUNT'), '1', 'lists updated by monthly check');
+  eq(e.props.get('DENY_0'), 'bad1.com', 'domain stored');
+  assert(e.props.get('LISTS_UPDATED'), 'date stamped');
+  assert(e.logs.some(l => l.indexOf('可信度名單已更新') !== -1), 'update logged: ' + e.logs.join(' / '));
+});
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 if (failures.length) {
   console.log('Failures:\n' + failures.map(f => ' - ' + f).join('\n'));

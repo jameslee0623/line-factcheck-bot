@@ -23,17 +23,22 @@
  *   IMAGE                     — 1=有字圖片查核（1:1 和群組用同一個開關），0=不查（預設 1）
  *   EXA_API_KEY               — Exa 免費搜尋金鑰（exa.ai 申請，每月 $10 額度不用信用卡）；沒設就照原本方式回答
  *   EXA                        — 1=即時搜尋開，0=關（預設 1；沒設 EXA_API_KEY 時就算開也不會搜尋）
+ *   DENY_<n>                  — 不可靠來源名單（機器人自己寫，每格 9KB 上限所以切成多格）
+ *   DENY_COUNT                — 名單有幾格（機器人自己寫）
+ *   LISTS_UPDATED             — 名單最後更新日期（機器人自己寫）
  *   GROUP_NAMES               — 自動學到的群組名單（JSON，機器人自己寫）
  *   GROUP_MEMBERS_<groupId>   — 自動學到的群組成員（JSON，機器人自己寫）
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
  *   PANEL_<ownerId>           — 設定面板的進行狀態（JSON，機器人自己寫）
  *
- * === 模型每月檢查 ===
+ * === 模型和名單每月檢查 ===
  *   每月 1 號早上 9 點跑一次 monthlyModelCheck（排程不用手動建立，
  *   下一則 LINE 訊息進來時機器人自己建立）。只有當現在用的模型已經退役
  *   （不在 Google 的模型清單裡），才換成最新的 Flash（主要）和
  *   最新的 Flash-Lite（備用）。舊模型還在就什麼都不做，不會因為
  *   出了新模型就一直換。模型不在設定面板裡，面板只能看，不能改。
+ *   同一次檢查也會更新不可靠來源名單（CRED-1 + uBlacklist 假新聞清單，
+ *   去重後存在 DENY_0、DENY_1……；LISTS_UPDATED 是更新日期）。
  *
  * === 觸發條件 ===
  *   群組：訊息開頭是手動觸發詞（查 / !fact / !check…），或 @ 提到機器人，
@@ -46,7 +51,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.19';
+const SCRIPT_VERSION = '1.1.20';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -124,6 +129,7 @@ function settings() {
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
     exa: prop('EXA', '1') !== '0' && prop('EXA_API_KEY', '') !== '',
+    listsUpdated: prop('LISTS_UPDATED', ''),
     ownerId: prop('OWNER_USER_ID', '')
   };
 }
@@ -257,15 +263,19 @@ const SEARCH_MAX_RESULTS = 8;
 // ---------- 來源可信度分級 ----------
 // 只看網域，不看內容。第 1 級：官方和權威機構；第 2 級：主流媒體和參考資料；
 // 第 3 級：其他網站（預設）。等級只幫模型判斷該信哪個來源，不代表內容一定正確。
-const TIER1_DOMAINS = ['who.int', 'cna.com.tw', 'pts.org.tw', 'reuters.com', 'apnews.com', 'bbc.com', 'bbc.co.uk', 'nature.com', 'science.org', 'nejm.org', 'thelancet.com'];
+const TIER1_DOMAINS = ['who.int', 'cna.com.tw', 'pts.org.tw', 'reuters.com', 'apnews.com', 'bbc.com', 'bbc.co.uk', 'nature.com', 'science.org', 'nejm.org', 'thelancet.com', 'tfc-taiwan.org.tw', 'mygopen.com', 'cofacts.tw'];
 const TIER2_DOMAINS = ['wikipedia.org', 'udn.com', 'chinatimes.com', 'ltn.com.tw', 'tvbs.com.tw', 'setn.com', 'ettoday.net', 'ftvnews.com.tw', 'cts.com.tw', 'storm.mg', 'yahoo.com', 'commonhealth.com.tw'];
 function hostMatches(host, domain) {
   return host === domain || host.slice(-domain.length - 1) === '.' + domain;
 }
-function sourceTier(url) {
+function hostOf(url) {
   const m = String(url || '').toLowerCase().match(/^https?:\/\/([^/:]+)/);
   let host = m ? m[1] : '';
   if (host.slice(0, 4) === 'www.') host = host.slice(4);
+  return host;
+}
+function sourceTier(url) {
+  const host = hostOf(url);
   if (!host) return 3;
   if (TIER1_DOMAINS.some(function (d) { return hostMatches(host, d); })) return 1;
   if (TIER2_DOMAINS.some(function (d) { return hostMatches(host, d); })) return 2;
@@ -290,12 +300,93 @@ function isChinaTopic(text) {
   return /中國|大陸|中共|兩岸|香港|澳門|北京|上海/.test(text || '');
 }
 function isBlockedSource(url) {
-  const m = String(url || '').toLowerCase().match(/^https?:\/\/([^/:]+)/);
-  let host = m ? m[1] : '';
-  if (host.slice(0, 4) === 'www.') host = host.slice(4);
+  const host = hostOf(url);
   if (!host) return false;
   if (host.slice(-3) === '.cn' || host === 'cn') return true;
   return BLOCKED_DOMAINS.some(function (d) { return hostMatches(host, d); });
+}
+
+// ---------- 不可靠來源名單 ----------
+// 每月檢查從 CRED-1（分數 ≤ 0.50，它自己的 low + mixed 分界）和
+// uBlacklist 假新聞清單下載不可靠網域，合併去重後存在 Script Properties。
+// 一格屬性最多 9KB，所以切成 DENY_0、DENY_1……；DENY_COUNT 記有幾格。
+// 搜尋結果裡有這些網域就直接去掉，任何問題都一樣，沒有中國例外。
+const CRED1_URL = 'https://raw.githubusercontent.com/aloth/cred-1/main/data/cred1_compact.json';
+const UBLACKLIST_URL = 'https://raw.githubusercontent.com/RubenKelevra/ublacklist_fakenews/master/ublacklist-fakenews-media-light.txt';
+const DENY_CHUNK = 8000; // 每格留一點空間，不要貼著 9KB 上限
+var _denyCache = null;
+function updateCredibilityLists() {
+  const found = {};
+  let cred1n = 0, ubn = 0;
+  try {
+    const res = UrlFetchApp.fetch(CRED1_URL, { muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      const data = JSON.parse(res.getContentText());
+      Object.keys(data).forEach(function (d) {
+        const entry = data[d] || {};
+        if (typeof entry.s === 'number' && entry.s <= 0.50) { found[d.toLowerCase()] = true; cred1n++; }
+      });
+    } else {
+      console.log('CRED-1 下載失敗: ' + res.getResponseCode());
+    }
+  } catch (e) {
+    console.log('CRED-1 下載失敗: ' + e);
+  }
+  try {
+    const res = UrlFetchApp.fetch(UBLACKLIST_URL, { muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      res.getContentText().split('\n').forEach(function (line) {
+        const m = line.trim().match(/^\*:\/\/(\*\.)?([a-z0-9.-]+)\/?\*?$/);
+        if (m) { found[m[2].toLowerCase()] = true; ubn++; }
+      });
+    } else {
+      console.log('uBlacklist 下載失敗: ' + res.getResponseCode());
+    }
+  } catch (e) {
+    console.log('uBlacklist 下載失敗: ' + e);
+  }
+  const domains = Object.keys(found).sort();
+  if (!domains.length) {
+    console.log('可信度名單更新失敗：兩個來源都沒有拿到網域，舊名單不動');
+    return false;
+  }
+  const joined = domains.join(',');
+  const chunks = [];
+  for (let i = 0; i < joined.length; i += DENY_CHUNK) chunks.push(joined.slice(i, i + DENY_CHUNK));
+  const props = PropertiesService.getScriptProperties();
+  const oldCount = parseInt(props.getProperty('DENY_COUNT') || '0', 10) || 0;
+  for (let i = 0; i < oldCount; i++) props.deleteProperty('DENY_' + i);
+  chunks.forEach(function (c, i) { props.setProperty('DENY_' + i, c); });
+  props.setProperty('DENY_COUNT', String(chunks.length));
+  props.setProperty('LISTS_UPDATED', new Date().toISOString().slice(0, 10));
+  _denyCache = null;
+  console.log('可信度名單已更新：CRED-1 ' + cred1n + ' 個，uBlacklist ' + ubn + ' 個，去重後 ' + domains.length + ' 個，' + chunks.length + ' 格');
+  return true;
+}
+function getDenylist() {
+  if (_denyCache) return _denyCache;
+  const map = {};
+  const props = PropertiesService.getScriptProperties();
+  const count = parseInt(props.getProperty('DENY_COUNT') || '0', 10) || 0;
+  for (let i = 0; i < count; i++) {
+    const chunk = props.getProperty('DENY_' + i) || '';
+    chunk.split(',').forEach(function (d) { if (d) map[d] = true; });
+  }
+  _denyCache = map;
+  return map;
+}
+function isDenylisted(url) {
+  const host = hostOf(url);
+  if (!host) return false;
+  const deny = getDenylist();
+  let h = host;
+  while (h) {
+    if (deny[h]) return true;
+    const dot = h.indexOf('.');
+    if (dot === -1) break;
+    h = h.slice(dot + 1);
+  }
+  return false;
 }
 
 // Exa 即時搜尋（每月 $10 額度，不用信用卡）：把問題拿去搜尋，
@@ -804,7 +895,7 @@ function panelFlex(s) {
       flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'))
     ]),
     flexSep(),
-    { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程'), size: 'xs', color: '#aaaaaa', align: 'center' }
+    { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程') + ' · 名單：' + (s.listsUpdated || '未更新'), size: 'xs', color: '#aaaaaa', align: 'center' }
   ]);
 }
 
@@ -846,6 +937,7 @@ function memberFlex(groupId, s) {
 // 只有當現在用的模型已經退役（不在 Google 的模型清單裡），才換成
 // 最新的 Flash（主要）和最新的 Flash-Lite（備用）。舊模型還在就
 // 什麼都不做，不會因為出了新模型就一直換。
+// 同一次檢查也會更新不可靠來源名單（見 updateCredibilityLists）。
 function listModels() {
   const key = prop('GEMINI_API_KEY', '');
   if (!key) return null;
@@ -950,6 +1042,9 @@ function monthlyModelCheck() {
   } else {
     console.log('每月模型檢查：備用模型 ' + s.fallback + ' 還在，不換');
   }
+
+  // 同一次每月檢查也更新不可靠來源名單（失敗不影響模型檢查）。
+  updateCredibilityLists();
 }
 
 // 手動備用：設定面板打開時會自動建立排程，這個函數是在編輯器裡手動建立用的，跑兩次不會重複。
@@ -1040,6 +1135,10 @@ function askGemini(question, imageB64, s, searchQuery) {
         searchItems = searchItems.filter(function (r) { return !isBlockedSource(r.url); });
         if (searchItems.length < before) console.log('已過濾 ' + (before - searchItems.length) + ' 則 .cn / 官媒來源');
       }
+      // 不可靠來源名單：任何問題都去掉，沒有例外。
+      const beforeDeny = searchItems.length;
+      searchItems = searchItems.filter(function (r) { return !isDenylisted(r.url); });
+      if (searchItems.length < beforeDeny) console.log('已過濾 ' + (beforeDeny - searchItems.length) + ' 則不可靠來源');
       if (searchItems.length) {
         const lines = searchItems.map(function (r, i) {
           return (i + 1) + '. ' + tierLabel(sourceTier(r.url)) + ' ' + r.title + '\n' + r.url + '\n' + r.content;
@@ -1247,6 +1346,7 @@ function replyFlex(replyToken, flex) {
     '回覆上限：' + s.maxReplyChars + ' 字',
     '版本：' + SCRIPT_VERSION,
     '每月檢查：' + (triggerExists() ? '已排程' : '未排程'),
+    '名單：' + (s.listsUpdated || '未更新'),
     '直接改：傳送「字數 <數字>」「提示詞」'
   ];
   return replyLine(replyToken, lines.join('\n'), s);
