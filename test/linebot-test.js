@@ -41,11 +41,11 @@ function fresh() {
     listCode: 200,
     linkHtml: '<html><head><title>T</title></head><body><p>文章內文在這裡。</p></body></html>',
     linkCode: 200,
-    tavily: { results: [
-      { title: '大蒜功效研究', url: 'https://example.com/a', content: '目前沒有科學證據顯示大蒜可以治百病。' },
-      { title: '衛福部闢謠', url: 'https://example.com/b', content: '衛福部表示，吃大蒜不能治療疾病。' },
+    exa: { results: [
+      { title: '大蒜功效研究', url: 'https://example.com/a', text: '目前沒有科學證據顯示大蒜可以治百病。' },
+      { title: '衛福部闢謠', url: 'https://example.com/b', text: '衛福部表示，吃大蒜不能治療疾病。' },
     ] },
-    tavilyCode: 200,
+    exaCode: 200,
     groupName: '家族長輩群',
     memberName: '爸爸',
     modelList: [
@@ -111,9 +111,9 @@ function fresh() {
           if (state.listCode !== 200) return resp(state.listCode, 'err');
           return resp(200, { models: state.modelList });
         }
-        if (url.indexOf('api.tavily.com/search') !== -1) {
-          if (state.tavily === 'throw') throw new Error('tavily down');
-          return resp(state.tavilyCode, state.tavily || { results: [] });
+        if (url.indexOf('api.exa.ai/search') !== -1) {
+          if (state.exa === 'throw') throw new Error('exa down');
+          return resp(state.exaCode, state.exa || { results: [] });
         }
         // anything else: link fetch
         return resp(state.linkCode, state.linkHtml);
@@ -180,8 +180,8 @@ function hasFlex(env) {
 function geminiCalls(env) {
   return env.calls.filter(c => c.url.startsWith(GEMINI_BASE));
 }
-function tavilyCalls(env) {
-  return env.calls.filter(c => c.url.indexOf('api.tavily.com') !== -1);
+function exaCalls(env) {
+  return env.calls.filter(c => c.url.indexOf('api.exa.ai') !== -1);
 }
 function geminiQuestion(env, i) {
   const c = geminiCalls(env)[i || 0];
@@ -1009,81 +1009,82 @@ t('77. leave event stays silent', () => {
   eq(geminiCalls(e).length, 0, 'no Gemini call');
 });
 
-t('78. Tavily key set -> search first, Gemini without Google Search tool', () => {
+t('78. Exa key set -> search first, Gemini without Google Search tool', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
-  eq(tavilyCalls(e).length, 1, 'one Tavily call');
-  const tq = JSON.parse(tavilyCalls(e)[0].opts.payload);
+  eq(exaCalls(e).length, 1, 'one Exa call');
+  const tq = JSON.parse(exaCalls(e)[0].opts.payload);
   assert(tq.query.indexOf('吃大蒜可以治百病') !== -1, 'searches the question');
-  eq(tq.search_depth, 'basic', 'basic depth = 1 credit');
+  eq(tq.type, 'auto', 'auto search type');
+  eq(tq.numResults, 8, '8 results');
   eq(geminiCalls(e).length, 1, 'one Gemini call, no retry');
   const q = geminiQuestion(e, 0);
   assert(q.indexOf('沒有科學證據顯示大蒜可以治百病') !== -1, 'search results in question');
   const p = JSON.parse(geminiCalls(e)[0].opts.payload);
-  assert(!p.tools, 'no Google Search tool when Tavily searched');
+  assert(!p.tools, 'no Google Search tool when Exa searched');
 });
 
-t('79. no Tavily key -> no Tavily call, Google Search tool still used', () => {
+t('79. no Exa key -> no Exa call, Google Search tool still used', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
-  eq(tavilyCalls(e).length, 0, 'no Tavily call');
+  eq(exaCalls(e).length, 0, 'no Exa call');
   const p = JSON.parse(geminiCalls(e)[0].opts.payload);
   assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'Google Search tool present');
 });
 
-t('80. Tavily key set + image -> no Tavily call', () => {
+t('80. Exa key set + image -> no Exa call', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
   e.sb.handleEvent(msgEv({ message: { type: 'image', id: 'im1' } }));
-  eq(tavilyCalls(e).length, 0, 'no Tavily call for images');
+  eq(exaCalls(e).length, 0, 'no Exa call for images');
   eq(geminiCalls(e).length, 1, 'image checked');
 });
 
-t('81. Tavily fails -> falls back to Google Search tool, no crash', () => {
+t('81. Exa fails -> falls back to Google Search tool, no crash', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
-  e.state.tavilyCode = 401;
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exaCode = 401;
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
-  eq(tavilyCalls(e).length, 1, 'Tavily tried once');
+  eq(exaCalls(e).length, 1, 'Exa tried once');
   eq(geminiCalls(e).length, 1, 'Gemini still called');
   const p = JSON.parse(geminiCalls(e)[0].opts.payload);
   assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'falls back to tool');
 });
 
-t('82. question is only a link -> no Tavily call', () => {
+t('82. question is only a link -> no Exa call', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
   e.sb.handleEvent(msgEv({ text: 'https://example.com/news/1' }));
-  eq(tavilyCalls(e).length, 0, 'no Tavily call for bare link');
+  eq(exaCalls(e).length, 0, 'no Exa call for bare link');
 });
 
-t('83. panel and fallback show Tavily status', () => {
+t('83. panel and fallback show Exa status', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   const dumpOff = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dumpOff.indexOf('即時搜尋 (Tavily)') !== -1, 'row present');
+  assert(dumpOff.indexOf('即時搜尋 (Exa)') !== -1, 'row present');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   const fallbackOff = e.replies[1].messages[0].text;
   assert(fallbackOff.indexOf('即時搜尋：關') !== -1, 'off without key');
   const e2 = fresh();
-  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
   e2.state.replyCode = 500;
   e2.sb.handleEvent(msgEv({ text: '設定' }));
   const fallbackOn = e2.replies[1].messages[0].text;
   assert(fallbackOn.indexOf('即時搜尋：開') !== -1, 'on with key');
 });
 
-t('84. Tavily: model writes a wrong source list (drops [1]) -> bot replaces it with the real numbered list', () => {
+t('84. Exa: model writes a wrong source list (drops [1]) -> bot replaces it with the real numbered list', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
-  e.state.tavily = { results: [
-    { title: '雞蛋膽固醇迷思', url: 'https://example.com/egg', content: '一天一顆蛋對健康成人沒有問題。' },
-    { title: '博田國際健康管理中心', url: 'https://wellness.parkonehealth.tw/cholesterol', content: '膽固醇要注意飽和脂肪。' },
-    { title: '東元綜合醫院', url: 'https://www.tyh.com.tw/health/f20.html', content: '蛋的烹調方式很重要。' },
-    { title: '衛福部國民健康署', url: 'https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180', content: '水煮蛋是好的選擇。' },
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '雞蛋膽固醇迷思', url: 'https://example.com/egg', text: '一天一顆蛋對健康成人沒有問題。' },
+    { title: '博田國際健康管理中心', url: 'https://wellness.parkonehealth.tw/cholesterol', text: '膽固醇要注意飽和脂肪。' },
+    { title: '東元綜合醫院', url: 'https://www.tyh.com.tw/health/f20.html', text: '蛋的烹調方式很重要。' },
+    { title: '衛福部國民健康署', url: 'https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180', text: '水煮蛋是好的選擇。' },
   ] };
   const modelText = '烹調方式是關鍵：比起限制蛋的數量，怎麼烹調更重要。建議選擇水煮、水波或茶葉蛋等少油的方式，避免油炸或搭配過多飽和脂肪，對心血管負擔才最小[1, 2]。\n\n祝大家都身體健康、吃得安心！\n\n資料來源：\n- 衛福部國民健康署：https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180 [4]\n- 博田國際健康管理中心：https://wellness.parkonehealth.tw/cholesterol [2]\n- 東元綜合醫院：https://www.tyh.com.tw/health/f20.html [3]';
   e.state.gemini = () => e.resp(200, e.geminiOk(modelText, []));
@@ -1125,25 +1126,25 @@ t('86. no search results -> bot appends nothing, model text unchanged', () => {
   assert(reply.indexOf('某來源：https://example.com/x [1]') !== -1, 'model list kept when no real sources');
 });
 
-t('87. Tavily toggle off + key set -> no Tavily call, falls back to Google Search tool', () => {
+t('87. Exa toggle off + key set -> no Exa call, falls back to Google Search tool', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test', TAVILY: '0' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test', EXA: '0' });
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
-  eq(tavilyCalls(e).length, 0, 'no Tavily call when switched off');
+  eq(exaCalls(e).length, 0, 'no Exa call when switched off');
   const p = JSON.parse(geminiCalls(e)[0].opts.payload);
   assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'falls back to tool');
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('即時搜尋 (Tavily)') !== -1, 'row present');
+  assert(dump.indexOf('即時搜尋 (Exa)') !== -1, 'row present');
 });
 
-t('88. postback toggle flips TAVILY and re-shows panel', () => {
+t('88. postback toggle flips EXA and re-shows panel', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner', TAVILY_API_KEY: 'tvly-test', TAVILY: '1' });
-  e.sb.handleEvent(postEv({ data: 'panel:toggle:TAVILY' }));
-  eq(e.props.get('TAVILY'), '0', 'flipped off');
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner', EXA_API_KEY: 'exa-test', EXA: '1' });
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:EXA' }));
+  eq(e.props.get('EXA'), '0', 'flipped off');
   assert(hasFlex(e), 'panel re-shown');
-  e.sb.handleEvent(postEv({ data: 'panel:toggle:TAVILY' }));
-  eq(e.props.get('TAVILY'), '1', 'flipped back on');
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:EXA' }));
+  eq(e.props.get('EXA'), '1', 'flipped back on');
 });
 
 t('89. long reply (3000 chars) is NOT cut; Gemini asked for 2000 output tokens', () => {
@@ -1238,10 +1239,10 @@ t('95. sourceTier: official 1, media 2, unknown 3, subdomains count', () => {
 
 t('96. search results carry tier labels into the Gemini question', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
-  e.state.tavily = { results: [
-    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', content: '衛福部表示沒有證據。' },
-    { title: '某部落格', url: 'https://random-blog.example.com/miracle', content: '大蒜可以治百病。' },
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
+    { title: '某部落格', url: 'https://random-blog.example.com/miracle', text: '大蒜可以治百病。' },
   ] };
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
   const q = geminiQuestion(e, 0);
@@ -1249,12 +1250,12 @@ t('96. search results carry tier labels into the Gemini question', () => {
   assert(q.indexOf('【一般網站，僅供參考】') !== -1, 'tier 3 label');
 });
 
-t('97. Tavily asks for 8 results', () => {
+t('97. Exa asks for 8 results', () => {
   const e = fresh();
-  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
-  const tq = JSON.parse(tavilyCalls(e)[0].opts.payload);
-  eq(tq.max_results, 8, '8 results');
+  const tq = JSON.parse(exaCalls(e)[0].opts.payload);
+  eq(tq.numResults, 8, '8 results');
 });
 
 // ================= summary =================

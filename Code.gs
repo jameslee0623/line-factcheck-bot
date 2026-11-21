@@ -18,11 +18,11 @@
  *   TRIGGERS                  — 手動觸發詞，用逗號分開（預設：!查,!fact,!check,!factcheck,查,查一下,幫我查）
  *   AUTO_MIN_CHARS            — 自動查核的字數下限（預設 200 字；手動觸發不受限）
  *   MAX_REPLY_CHARS           — 回覆字數上限（預設 5000；LINE 單則訊息上限就是 5000，設滿才不會在來源清單中間被切斷）
- *   MAX_OUTPUT_TOKENS         — 回答長度上限（預設 2000 tokens；600 字回答 + 5 條長網址來源約 2100 字，1200 不夠）
+ *   MAX_OUTPUT_TOKENS         — 回答長度上限（預設 2000 tokens；600 字回答 + 8 條長網址來源約 2100 字，1200 不夠）
  *   FETCH_LINK_TEXT           — 1=抓取連結內文再查核，0=只傳連結（預設 1）
  *   IMAGE                     — 1=有字圖片查核（1:1 和群組用同一個開關），0=不查（預設 1）
- *   TAVILY_API_KEY            — Tavily 免費搜尋金鑰（tavily.com 申請，1000 次/月不用信用卡）；沒設就照原本方式回答
- *   TAVILY                     — 1=即時搜尋開，0=關（預設 1；沒設 TAVILY_API_KEY 時就算開也不會搜尋）
+ *   EXA_API_KEY               — Exa 免費搜尋金鑰（exa.ai 申請，每月 $10 額度不用信用卡）；沒設就照原本方式回答
+ *   EXA                        — 1=即時搜尋開，0=關（預設 1；沒設 EXA_API_KEY 時就算開也不會搜尋）
  *   GROUP_NAMES               — 自動學到的群組名單（JSON，機器人自己寫）
  *   GROUP_MEMBERS_<groupId>   — 自動學到的群組成員（JSON，機器人自己寫）
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
@@ -123,7 +123,7 @@ function settings() {
     maxOutputTokens: numProp('MAX_OUTPUT_TOKENS', 2000),
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
-    tavily: prop('TAVILY', '1') !== '0' && prop('TAVILY_API_KEY', '') !== '',
+    exa: prop('EXA', '1') !== '0' && prop('EXA_API_KEY', '') !== '',
     ownerId: prop('OWNER_USER_ID', '')
   };
 }
@@ -251,7 +251,7 @@ function fetchLinkText(url) {
 }
 
 // 每次搜尋拿幾個結果：8 個比 5 個多，模型可以交叉比對；
-// Tavily basic 一次搜尋就是 1 點，不管幾個結果；來源清單 8 則還是遠在 5000 字回覆上限內。
+// Exa 一次搜尋約 $0.007，不管幾個結果（前 10 個都含在基本價裡）；來源清單 8 則還是遠在 5000 字回覆上限內。
 const SEARCH_MAX_RESULTS = 8;
 
 // ---------- 來源可信度分級 ----------
@@ -281,32 +281,32 @@ function tierLabel(tier) {
   return '【一般網站，僅供參考】';
 }
 
-// Tavily 即時搜尋（免費 1000 次/月，不用信用卡）：把問題拿去搜尋，
+// Exa 即時搜尋（每月 $10 額度，不用信用卡）：把問題拿去搜尋，
 // 回傳結果陣列 [{title, url, content}]，交給 Gemini 判斷。
-// 沒設 TAVILY_API_KEY、搜尋失敗或沒有結果都回空陣列，機器人就照原本的方式回答。
-function tavilySearch(query) {
-  const key = prop('TAVILY_API_KEY', '');
+// 沒設 EXA_API_KEY、搜尋失敗或沒有結果都回空陣列，機器人就照原本的方式回答。
+function exaSearch(query) {
+  const key = prop('EXA_API_KEY', '');
   if (!key || !query) return [];
   try {
-    const res = UrlFetchApp.fetch('https://api.tavily.com/search', {
+    const res = UrlFetchApp.fetch('https://api.exa.ai/search', {
       method: 'post',
       contentType: 'application/json',
-      headers: { Authorization: 'Bearer ' + key },
-      payload: JSON.stringify({ query: query.slice(0, 500), search_depth: 'basic', max_results: SEARCH_MAX_RESULTS, include_answer: false }),
+      headers: { 'x-api-key': key },
+      payload: JSON.stringify({ query: query.slice(0, 500), type: 'auto', numResults: SEARCH_MAX_RESULTS, contents: { text: { maxCharacters: 500 } } }),
       muteHttpExceptions: true
     });
     if (res.getResponseCode() !== 200) {
-      console.log('Tavily 搜尋失敗: ' + res.getResponseCode());
+      console.log('Exa 搜尋失敗: ' + res.getResponseCode());
       return [];
     }
     const data = JSON.parse(res.getContentText());
     const results = (data.results || []).map(function (r) {
-      return { title: r.title || '', url: r.url || '', content: (r.content || '').slice(0, 500) };
+      return { title: r.title || '', url: r.url || '', content: (r.text || '').slice(0, 500) };
     }).filter(function (r) { return r.url; });
-    console.log('Tavily 搜尋：找到 ' + results.length + ' 則結果');
+    console.log('Exa 搜尋：找到 ' + results.length + ' 則結果');
     return results;
   } catch (err) {
-    console.log('Tavily 搜尋失敗: ' + err);
+    console.log('Exa 搜尋失敗: ' + err);
     return [];
   }
 }
@@ -655,7 +655,7 @@ function handlePostback(ev) {
   }
   if (p[1] === 'toggle') {
     const key = p[2];
-    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'TAVILY') return;
+    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'EXA') return;
     const dflt = '1';
     setProp(key, prop(key, dflt) === '1' ? '0' : '1');
     replyFlex(token, panelFlex(settings()));
@@ -768,7 +768,7 @@ function panelFlex(s) {
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
       flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
-      flexRow('即時搜尋 (Tavily)', s.tavily ? '開' : '關', flexBtn('切換', 'panel:toggle:TAVILY')),
+      flexRow('即時搜尋 (Exa)', s.exa ? '開' : '關', flexBtn('切換', 'panel:toggle:EXA')),
       flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE')),
       flexRow('影片 · 檔案 / 連結', '暫停', null),
       flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'))
@@ -1004,18 +1004,18 @@ function askGemini(question, imageB64, s, searchQuery) {
     return '查核服務還沒設定好，請管理員檢查設定。';
   }
 
-  // Tavily 即時搜尋：有設定 key 且不是圖片時，先把問題（去掉連結）拿去搜尋，
+  // Exa 即時搜尋：有設定 key 且不是圖片時，先把問題（去掉連結）拿去搜尋，
   // 再把結果交給 Gemini。搜尋成功就不用 Google 搜尋工具（免費版 3.x 不能用，會直接 429）。
   // 結果編號 1、2、3… 和回答裡的 [1]、[2] 對上，機器人最後自己附來源清單。
   let q = question;
   let searched = false;
-  let tavilyItems = [];
-  if (!imageB64 && searchQuery && s.tavily) {
+  let searchItems = [];
+  if (!imageB64 && searchQuery && s.exa) {
     const queryText = searchQuery.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
     if (queryText.length >= 10) {
-      tavilyItems = tavilySearch(queryText);
-      if (tavilyItems.length) {
-        const lines = tavilyItems.map(function (r, i) {
+      searchItems = exaSearch(queryText);
+      if (searchItems.length) {
+        const lines = searchItems.map(function (r, i) {
           return (i + 1) + '. ' + tierLabel(sourceTier(r.url)) + ' ' + r.title + '\n' + r.url + '\n' + r.content;
         });
         q = question + '\n\n即時搜尋結果（請根據這些來源判斷，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附）：\n' + lines.join('\n\n');
@@ -1025,21 +1025,21 @@ function askGemini(question, imageB64, s, searchQuery) {
   }
 
   const res = callGeminiModel(primary, key, q, imageB64, s, !searched);
-  if (res.ok) return attachSources(res.text, searched ? tavilyItems : res.sources);
+  if (res.ok) return attachSources(res.text, searched ? searchItems : res.sources);
 
   // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）、0（連不上或回應壞掉）
   const retryable = res.code === 429 || res.code === 404 || res.code === 0 || res.code >= 500;
   if (retryable && fallback && fallback !== primary) {
     console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
     const res2 = callGeminiModel(fallback, key, q, imageB64, s, !searched);
-    if (res2.ok) return attachSources(res2.text, searched ? tavilyItems : res2.sources);
+    if (res2.ok) return attachSources(res2.text, searched ? searchItems : res2.sources);
     return friendlyGeminiError(res2.code, res2.body);
   }
   return friendlyGeminiError(res.code, res.body);
 }
 
 // 呼叫 Gemini（必要時會重試）。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
-// useTools=false 時不附 Google 搜尋工具（Tavily 已經搜過了，或本來就沒要用）。
+// useTools=false 時不附 Google 搜尋工具（Exa 已經搜過了，或本來就沒要用）。
 // 503 / 5xx / 連不上時等 2 秒再試一次（Google 暫時太忙，通常幾秒就好）。
 function callGeminiModel(model, key, question, imageB64, s, useTools) {
   s = s || settings();
@@ -1215,7 +1215,7 @@ function replyFlex(replyToken, flex) {
     '備用模型：' + s.fallback,
     '字數下限：' + s.autoMinChars + ' 字',
     '連結抓取：' + (s.fetchLinkText ? '開' : '關'),
-    '即時搜尋：' + (s.tavily ? '開' : '關'),
+    '即時搜尋：' + (s.exa ? '開' : '關'),
     '有字圖片：' + (s.image ? '開' : '關'),
     '影片：暫停',
     '回覆上限：' + s.maxReplyChars + ' 字',
