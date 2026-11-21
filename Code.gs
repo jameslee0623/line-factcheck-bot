@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.15';
+const SCRIPT_VERSION = '1.1.16';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -65,7 +65,7 @@ const USAGE = '我是查核小幫手。用法：\n'
 const JOIN_HELLO = '大家好，我是查核小幫手。長訊息和連結我會自動查核；想查某則訊息，就回覆它並 @ 我。';
 
 const SYSTEM_PROMPT_DEFAULT = [
-  '你是一個在家庭長輩群組裡的溫和事實查核小幫手。',
+  '你是一個在家庭群組裡的溫和事實查核小幫手。',
   '用繁體中文回答，語氣像晚輩對長輩一樣尊重、溫和。',
   '先肯定訊息中正確或有道理的部分，再用「補充資料」的方式指出錯誤或缺少的脈絡，不要直接說對方錯了，也不要用對抗、嘲諷的語氣。',
   '用搜尋到的資料查核，不要只憑記憶；每個關鍵說法都要有來源，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附上真正的清單；沒有搜尋結果時不要編造來源連結。',
