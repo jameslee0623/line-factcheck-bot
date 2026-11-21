@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.14';
+const SCRIPT_VERSION = '1.1.15';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -1006,8 +1006,9 @@ function askGemini(question, imageB64, s, searchQuery) {
   return friendlyGeminiError(res.code, res.body);
 }
 
-// 呼叫一次 Gemini。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
+// 呼叫 Gemini（必要時會重試）。成功回傳 { ok: true, text }，失敗回傳 { ok: false, code, body }。
 // useTools=false 時不附 Google 搜尋工具（Tavily 已經搜過了，或本來就沒要用）。
+// 503 / 5xx / 連不上時等 2 秒再試一次（Google 暫時太忙，通常幾秒就好）。
 function callGeminiModel(model, key, question, imageB64, s, useTools) {
   s = s || settings();
   if (useTools === undefined) useTools = true;
@@ -1026,6 +1027,14 @@ function callGeminiModel(model, key, question, imageB64, s, useTools) {
       return res2;
     }
     return res;
+  }
+  // 503 / 5xx / 連不上：Google 那邊暫時太忙，通常幾秒就好。
+  // 等 2 秒再試一次同一個模型（只試一次；就算兩個模型都等，整個流程還是遠在 LINE 60 秒回覆期限內）。
+  // 429 不在這裡等——那是額度問題，等 2 秒沒用，換備用模型才是正解。
+  if (res.code === 0 || res.code >= 500) {
+    console.log(res.code + '，等 2 秒再試一次');
+    Utilities.sleep(2000);
+    return tryOnce(model, key, question, imageB64, useTools, s);
   }
   return res;
 }

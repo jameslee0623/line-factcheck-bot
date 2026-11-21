@@ -33,6 +33,7 @@ function fresh() {
   const calls = [];   // every UrlFetchApp.fetch call {url, opts}
   const replies = []; // payloads sent to LINE reply endpoint
   const logs = [];
+  const sleeps = [];  // Utilities.sleep calls (ms)
   const state = {
     gemini: null,      // fn(url, opts) -> {code, body} | 'throw'
     imageOk: true,
@@ -135,11 +136,11 @@ function fresh() {
       MimeType: { TEXT: 'text' },
       createTextOutput: (s) => ({ setMimeType: () => ({ getContent: () => s }) }),
     },
-    Utilities: { base64Encode: (b) => Buffer.from(b).toString('base64') },
+    Utilities: { base64Encode: (b) => Buffer.from(b).toString('base64'), sleep: (ms) => { sleeps.push(ms); } },
   };
   vm.createContext(sandbox);
   vm.runInContext(CODE, sandbox);
-  return { sb: sandbox, props, cache, triggers, calls, replies, logs, state, geminiOk, resp };
+  return { sb: sandbox, props, cache, triggers, calls, replies, logs, sleeps, state, geminiOk, resp };
 }
 
 function setProps(env, obj) {
@@ -315,11 +316,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.14', () => {
+t('14. doPost logs Bot version 1.1.15', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.14') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.15') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -859,13 +860,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.14') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.15') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.14') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.15') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1174,6 +1175,47 @@ t('91. group 150-char text -> silent under new 200 default', () => {
   assert(mid.length >= 100 && mid.length < 200, 'between old and new threshold: ' + mid.length);
   e.sb.handleEvent(groupEv({ text: mid }));
   eq(geminiCalls(e).length, 0, 'silent under 200');
+});
+
+t('92. primary 503 -> wait 2s, retry same model, answer (no fallback)', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  let n = 0;
+  e.state.gemini = () => {
+    n++;
+    return n === 1 ? e.resp(503, 'overloaded') : e.resp(200, e.geminiOk('稍等後的答案', []));
+  };
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  eq(e.sleeps.length, 1, 'slept once');
+  eq(e.sleeps[0], 2000, '2 seconds');
+  eq(geminiCalls(e).length, 2, 'two calls, both primary');
+  assert(geminiCalls(e)[1].url.indexOf('gemini-3.8-flash') !== -1, 'retry same model');
+  assert(replyTexts(e)[0].indexOf('稍等後的答案') !== -1, 'answer returned');
+});
+
+t('93. primary and fallback both 503 after retry -> 503 message, slept twice', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.gemini = () => e.resp(503, 'overloaded');
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  eq(geminiCalls(e).length, 4, 'primary x2 + fallback x2');
+  eq(e.sleeps.length, 2, 'slept twice');
+  assert(e.sleeps.every(function (ms) { return ms === 2000; }), '2s each');
+  assert(replyTexts(e)[0].indexOf('出錯了（503）') !== -1, '503 message');
+});
+
+t('94. 429 does not wait - falls back to the other model at once', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  let n = 0;
+  e.state.gemini = () => {
+    n++;
+    return n <= 2 ? e.resp(429, 'quota') : e.resp(200, e.geminiOk('備用模型答案', []));
+  };
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  eq(e.sleeps.length, 0, 'no sleep on 429');
+  eq(geminiCalls(e).length, 3, 'primary x2 + fallback');
+  assert(replyTexts(e)[0].indexOf('備用模型答案') !== -1, 'fallback answer');
 });
 
 // ================= summary =================
