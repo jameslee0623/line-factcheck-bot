@@ -315,11 +315,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.12', () => {
+t('14. doPost logs Bot version 1.1.13', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.12') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.13') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -859,13 +859,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.12') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.13') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.12') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.13') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1139,6 +1139,28 @@ t('88. postback toggle flips TAVILY and re-shows panel', () => {
   assert(hasFlex(e), 'panel re-shown');
   e.sb.handleEvent(postEv({ data: 'panel:toggle:TAVILY' }));
   eq(e.props.get('TAVILY'), '1', 'flipped back on');
+});
+
+t('89. long reply (3000 chars) is NOT cut; Gemini asked for 2000 output tokens', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.gemini = () => e.resp(200, e.geminiOk('答'.repeat(3000), []));
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  const reply = replyTexts(e)[0];
+  eq(reply.length, 3000, 'full reply kept');
+  assert(reply.indexOf('……') === -1, 'no cut marker');
+  const p = JSON.parse(geminiCalls(e)[0].opts.payload);
+  eq(p.generationConfig.maxOutputTokens, 2000, 'output tokens raised');
+});
+
+t('90. reply over LINE max (6000 chars) is still cut at 5000 with marker', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  e.state.gemini = () => e.resp(200, e.geminiOk('答'.repeat(6000), []));
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  const reply = replyTexts(e)[0];
+  eq(reply.length, 5002, '5000 chars + marker');
+  assert(reply.endsWith('……'), 'cut marker present');
 });
 
 // ================= summary =================
