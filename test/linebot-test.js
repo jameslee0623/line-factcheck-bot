@@ -316,11 +316,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.18', () => {
+t('14. doPost logs Bot version 1.1.19', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.18') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.19') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -860,13 +860,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.18') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.19') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.18') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.19') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1018,6 +1018,8 @@ t('78. Exa key set -> search first, Gemini without Google Search tool', () => {
   assert(tq.query.indexOf('吃大蒜可以治百病') !== -1, 'searches the question');
   eq(tq.type, 'auto', 'auto search type');
   eq(tq.numResults, 8, '8 results');
+  eq(tq.userLocation, 'TW', 'Taiwan location');
+  assert(tq.contents && tq.contents.highlights === true, 'highlights requested');
   eq(geminiCalls(e).length, 1, 'one Gemini call, no retry');
   const q = geminiQuestion(e, 0);
   assert(q.indexOf('沒有科學證據顯示大蒜可以治百病') !== -1, 'search results in question');
@@ -1312,6 +1314,32 @@ t('100. .cn and state-media results dropped unless the question is about China',
   e2.sb.handleEvent(msgEv({ text: '查 中國大蒜產量是世界第一嗎' }));
   q = geminiQuestion(e2, 0);
   assert(q.indexOf('中國大蒜產量世界第一') !== -1, 'cn kept for China question');
+});
+
+t('102. highlights preferred over page text, userLocation TW sent', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', highlights: ['衛福部表示沒有證據，這是謠言。'], text: '這是一篇很長的文章開頭，講了很多不相干的事。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const tq = JSON.parse(exaCalls(e)[0].opts.payload);
+  eq(tq.userLocation, 'TW', 'Taiwan location');
+  assert(tq.contents && tq.contents.highlights === true, 'highlights requested');
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('衛福部表示沒有證據，這是謠言') !== -1, 'highlight in question');
+  assert(q.indexOf('不相干的事') === -1, 'page intro not used');
+});
+
+t('103. no highlights -> falls back to page text', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', highlights: [], text: '衛福部表示沒有證據。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('衛福部表示沒有證據') !== -1, 'text fallback used');
 });
 
 t('101. all search results blocked -> falls back to Google Search tool', () => {

@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.18';
+const SCRIPT_VERSION = '1.1.19';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -309,7 +309,7 @@ function exaSearch(query) {
       method: 'post',
       contentType: 'application/json',
       headers: { 'x-api-key': key },
-      payload: JSON.stringify({ query: query.slice(0, 500), type: 'auto', numResults: SEARCH_MAX_RESULTS, contents: { text: { maxCharacters: 500 } } }),
+      payload: JSON.stringify({ query: query.slice(0, 500), type: 'auto', numResults: SEARCH_MAX_RESULTS, userLocation: 'TW', contents: { highlights: true, text: { maxCharacters: 500 } } }),
       muteHttpExceptions: true
     });
     if (res.getResponseCode() !== 200) {
@@ -318,7 +318,9 @@ function exaSearch(query) {
     }
     const data = JSON.parse(res.getContentText());
     const results = (data.results || []).map(function (r) {
-      return { title: r.title || '', url: r.url || '', content: (r.text || '').slice(0, 500) };
+      // 優先用 highlights（問句相關的段落），沒有才用整頁文字開頭。
+      const highlights = (r.highlights || []).join(' ');
+      return { title: r.title || '', url: r.url || '', content: (highlights || r.text || '').slice(0, 500) };
     }).filter(function (r) { return r.url; });
     console.log('Exa 搜尋：找到 ' + results.length + ' 則結果');
     return results;
