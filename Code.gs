@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.16';
+const SCRIPT_VERSION = '1.1.17';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -69,6 +69,7 @@ const SYSTEM_PROMPT_DEFAULT = [
   '用繁體中文回答，語氣像晚輩對長輩一樣尊重、溫和。',
   '先肯定訊息中正確或有道理的部分，再用「補充資料」的方式指出錯誤或缺少的脈絡，不要直接說對方錯了，也不要用對抗、嘲諷的語氣。',
   '用搜尋到的資料查核，不要只憑記憶；每個關鍵說法都要有來源，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附上真正的清單；沒有搜尋結果時不要編造來源連結。',
+  '來源有標可信度等級：優先採用官方／權威來源（政府機關、醫院、大學），其次是主流媒體；一般網站只能當參考，不能當作唯一依據；如果不同來源說法不一致，要直接說出來，不要只挑一種講。',
   '回答要簡短，重點清楚，不要超過 600 字。',
   '如果查不到可靠資料，就說查不到，不要硬編答案。'
 ].join('\n');
@@ -249,6 +250,37 @@ function fetchLinkText(url) {
   }
 }
 
+// 每次搜尋拿幾個結果：8 個比 5 個多，模型可以交叉比對；
+// Tavily basic 一次搜尋就是 1 點，不管幾個結果；來源清單 8 則還是遠在 5000 字回覆上限內。
+const SEARCH_MAX_RESULTS = 8;
+
+// ---------- 來源可信度分級 ----------
+// 只看網域，不看內容。第 1 級：官方和權威機構；第 2 級：主流媒體和參考資料；
+// 第 3 級：其他網站（預設）。等級只幫模型判斷該信哪個來源，不代表內容一定正確。
+const TIER1_DOMAINS = ['who.int', 'cna.com.tw', 'pts.org.tw', 'reuters.com', 'apnews.com', 'bbc.com', 'bbc.co.uk', 'nature.com', 'science.org', 'nejm.org', 'thelancet.com'];
+const TIER2_DOMAINS = ['wikipedia.org', 'udn.com', 'chinatimes.com', 'ltn.com.tw', 'tvbs.com.tw', 'setn.com', 'ettoday.net', 'ftvnews.com.tw', 'cts.com.tw', 'storm.mg', 'yahoo.com', 'commonhealth.com.tw'];
+function hostMatches(host, domain) {
+  return host === domain || host.slice(-domain.length - 1) === '.' + domain;
+}
+function sourceTier(url) {
+  const m = String(url || '').toLowerCase().match(/^https?:\/\/([^/:]+)/);
+  let host = m ? m[1] : '';
+  if (host.slice(0, 4) === 'www.') host = host.slice(4);
+  if (!host) return 3;
+  if (TIER1_DOMAINS.some(function (d) { return hostMatches(host, d); })) return 1;
+  if (TIER2_DOMAINS.some(function (d) { return hostMatches(host, d); })) return 2;
+  // 官方和學術網域後綴：.gov、.gov.tw、.edu、.edu.tw、.ac.uk 等
+  if (host.slice(-4) === '.gov' || host.slice(-7) === '.gov.tw' ||
+      host.slice(-4) === '.edu' || host.slice(-7) === '.edu.tw' ||
+      host.indexOf('.ac.') !== -1) return 1;
+  return 3;
+}
+function tierLabel(tier) {
+  if (tier === 1) return '【官方／權威來源】';
+  if (tier === 2) return '【主流媒體】';
+  return '【一般網站，僅供參考】';
+}
+
 // Tavily 即時搜尋（免費 1000 次/月，不用信用卡）：把問題拿去搜尋，
 // 回傳結果陣列 [{title, url, content}]，交給 Gemini 判斷。
 // 沒設 TAVILY_API_KEY、搜尋失敗或沒有結果都回空陣列，機器人就照原本的方式回答。
@@ -260,7 +292,7 @@ function tavilySearch(query) {
       method: 'post',
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + key },
-      payload: JSON.stringify({ query: query.slice(0, 500), search_depth: 'basic', max_results: 5, include_answer: false }),
+      payload: JSON.stringify({ query: query.slice(0, 500), search_depth: 'basic', max_results: SEARCH_MAX_RESULTS, include_answer: false }),
       muteHttpExceptions: true
     });
     if (res.getResponseCode() !== 200) {
@@ -984,7 +1016,7 @@ function askGemini(question, imageB64, s, searchQuery) {
       tavilyItems = tavilySearch(queryText);
       if (tavilyItems.length) {
         const lines = tavilyItems.map(function (r, i) {
-          return (i + 1) + '. ' + r.title + '\n' + r.url + '\n' + r.content;
+          return (i + 1) + '. ' + tierLabel(sourceTier(r.url)) + ' ' + r.title + '\n' + r.url + '\n' + r.content;
         });
         q = question + '\n\n即時搜尋結果（請根據這些來源判斷，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附）：\n' + lines.join('\n\n');
         searched = true;

@@ -316,11 +316,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.16', () => {
+t('14. doPost logs Bot version 1.1.17', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.16') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.17') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -860,13 +860,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.16') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.17') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.16') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.17') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1216,6 +1216,45 @@ t('94. 429 does not wait - falls back to the other model at once', () => {
   eq(e.sleeps.length, 0, 'no sleep on 429');
   eq(geminiCalls(e).length, 3, 'primary x2 + fallback');
   assert(replyTexts(e)[0].indexOf('備用模型答案') !== -1, 'fallback answer');
+});
+
+t('95. sourceTier: official 1, media 2, unknown 3, subdomains count', () => {
+  const e = fresh();
+  const tier = e.sb.sourceTier;
+  eq(tier('https://www.mohw.gov.tw/news/1'), 1, 'gov.tw');
+  eq(tier('https://www.cdc.gov/flu/'), 1, 'gov');
+  eq(tier('https://www.who.int/news'), 1, 'who.int');
+  eq(tier('https://www.cna.com.tw/news/a'), 1, 'cna');
+  eq(tier('https://www.ox.ac.uk/research'), 1, 'ac.uk');
+  eq(tier('https://www.stanford.edu/news'), 1, 'edu');
+  eq(tier('https://zh.wikipedia.org/wiki/x'), 2, 'wikipedia');
+  eq(tier('https://health.udn.com/health/story/1'), 2, 'udn subdomain');
+  eq(tier('https://www.ettoday.net/news/1'), 2, 'ettoday');
+  eq(tier('https://random-health-blog.example.com/miracle'), 3, 'unknown blog');
+  eq(tier('https://content-farm.example.com/a'), 3, 'content farm');
+  eq(tier('not-a-url'), 3, 'not a url');
+  eq(tier(''), 3, 'empty');
+});
+
+t('96. search results carry tier labels into the Gemini question', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.state.tavily = { results: [
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', content: '衛福部表示沒有證據。' },
+    { title: '某部落格', url: 'https://random-blog.example.com/miracle', content: '大蒜可以治百病。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('【官方／權威來源】') !== -1, 'tier 1 label: ' + q);
+  assert(q.indexOf('【一般網站，僅供參考】') !== -1, 'tier 3 label');
+});
+
+t('97. Tavily asks for 8 results', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const tq = JSON.parse(tavilyCalls(e)[0].opts.payload);
+  eq(tq.max_results, 8, '8 results');
 });
 
 // ================= summary =================
