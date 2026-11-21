@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.17';
+const SCRIPT_VERSION = '1.1.18';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -279,6 +279,23 @@ function tierLabel(tier) {
   if (tier === 1) return '【官方／權威來源】';
   if (tier === 2) return '【主流媒體】';
   return '【一般網站，僅供參考】';
+}
+
+// ---------- .cn / 官媒來源 ----------
+// 訊息沒提到中國時，不用 .cn 來源：它們受中國政府管制，不是獨立查核的好來源。
+// 但 .cn 規則抓不到 .com 的官媒，所以新華社、央視、中新社、環球網要另外列。
+// 訊息提到中國時才用 .cn 來源——那時它們才是第一手資料。
+const BLOCKED_DOMAINS = ['xinhuanet.com', 'cctv.com', 'chinanews.com', 'huanqiu.com'];
+function isChinaTopic(text) {
+  return /中國|大陸|中共|兩岸|香港|澳門|北京|上海/.test(text || '');
+}
+function isBlockedSource(url) {
+  const m = String(url || '').toLowerCase().match(/^https?:\/\/([^/:]+)/);
+  let host = m ? m[1] : '';
+  if (host.slice(0, 4) === 'www.') host = host.slice(4);
+  if (!host) return false;
+  if (host.slice(-3) === '.cn' || host === 'cn') return true;
+  return BLOCKED_DOMAINS.some(function (d) { return hostMatches(host, d); });
 }
 
 // Exa 即時搜尋（每月 $10 額度，不用信用卡）：把問題拿去搜尋，
@@ -1014,6 +1031,13 @@ function askGemini(question, imageB64, s, searchQuery) {
     const queryText = searchQuery.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
     if (queryText.length >= 10) {
       searchItems = exaSearch(queryText);
+      // 訊息沒提到中國時，去掉 .cn 和官媒來源（見上方 .cn / 官媒來源）。
+      // 訊息裡的連結本身不受影響——那是要查核的對象，不是來源。
+      if (!isChinaTopic(question)) {
+        const before = searchItems.length;
+        searchItems = searchItems.filter(function (r) { return !isBlockedSource(r.url); });
+        if (searchItems.length < before) console.log('已過濾 ' + (before - searchItems.length) + ' 則 .cn / 官媒來源');
+      }
       if (searchItems.length) {
         const lines = searchItems.map(function (r, i) {
           return (i + 1) + '. ' + tierLabel(sourceTier(r.url)) + ' ' + r.title + '\n' + r.url + '\n' + r.content;

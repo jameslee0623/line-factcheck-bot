@@ -316,11 +316,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.17', () => {
+t('14. doPost logs Bot version 1.1.18', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.17') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.18') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -860,13 +860,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.17') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.18') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.17') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.18') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1256,6 +1256,77 @@ t('97. Exa asks for 8 results', () => {
   e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
   const tq = JSON.parse(exaCalls(e)[0].opts.payload);
   eq(tq.numResults, 8, '8 results');
+});
+
+t('98. isChinaTopic: China keywords, and only those', () => {
+  const e = fresh();
+  const f = e.sb.isChinaTopic;
+  assert(f('中國新政策是什麼'), '中國');
+  assert(f('大陸旅遊要注意什麼'), '大陸');
+  assert(f('兩岸關係怎麼樣'), '兩岸');
+  assert(f('香港反送中'), '香港');
+  assert(f('北京烤鴨好吃嗎'), '北京');
+  assert(!f('吃大蒜可以治百病是真的嗎'), 'not China');
+  assert(!f('普拿疼可以每天吃嗎'), 'not China');
+  assert(!f(''), 'empty');
+});
+
+t('99. isBlockedSource: .cn and the four .com state outlets', () => {
+  const e = fresh();
+  const f = e.sb.isBlockedSource;
+  assert(f('https://www.people.com.cn/n1/1'), 'people.com.cn');
+  assert(f('https://www.globaltimes.cn/page/1'), 'globaltimes.cn');
+  assert(f('https://www.chinadaily.com.cn/a/1'), 'chinadaily.com.cn');
+  assert(f('https://news.cn/english/1'), 'news.cn');
+  assert(f('https://www.xinhuanet.com/2026-11/21/c_1.htm'), 'xinhuanet.com');
+  assert(f('https://www.cctv.com/news/1'), 'cctv.com');
+  assert(f('https://www.chinanews.com/gn/1'), 'chinanews.com');
+  assert(f('https://www.huanqiu.com/article/1'), 'huanqiu.com');
+  assert(!f('https://www.mohw.gov.tw/news/1'), 'gov.tw ok');
+  assert(!f('https://zh.wikipedia.org/wiki/x'), 'wikipedia ok');
+  assert(!f('https://www.cna.com.tw/news/1'), 'cna ok');
+  assert(!f('https://www.bbc.com/news/1'), 'bbc ok');
+  assert(!f('not-a-url'), 'not a url');
+});
+
+t('100. .cn and state-media results dropped unless the question is about China', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '人民日報', url: 'https://www.people.com.cn/n1/1', text: '大蒜可以治百病。' },
+    { title: '新華社', url: 'https://www.xinhuanet.com/2026-11/21/c_1.htm', text: '大蒜可以治百病。' },
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  let q = geminiQuestion(e, 0);
+  assert(q.indexOf('衛福部表示沒有證據') !== -1, 'official kept');
+  assert(q.indexOf('people.com.cn') === -1, 'people.com.cn dropped');
+  assert(q.indexOf('xinhuanet.com') === -1, 'xinhuanet dropped');
+  // 問中國：.cn 來源留著
+  const e2 = fresh();
+  setProps(e2, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e2.state.exa = { results: [
+    { title: '人民日報', url: 'https://www.people.com.cn/n1/1', text: '中國大蒜產量世界第一。' },
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
+  ] };
+  e2.sb.handleEvent(msgEv({ text: '查 中國大蒜產量是世界第一嗎' }));
+  q = geminiQuestion(e2, 0);
+  assert(q.indexOf('中國大蒜產量世界第一') !== -1, 'cn kept for China question');
+});
+
+t('101. all search results blocked -> falls back to Google Search tool', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '人民日報', url: 'https://www.people.com.cn/n1/1', text: '大蒜可以治百病。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  eq(exaCalls(e).length, 1, 'Exa tried once');
+  const p = JSON.parse(geminiCalls(e)[0].opts.payload);
+  assert(p.tools && p.tools[0] && p.tools[0].googleSearch, 'falls back to tool when all filtered');
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('大蒜可以治百病') !== -1, 'question still asked');
+  assert(q.indexOf('即時搜尋結果') === -1, 'no search results in question');
 });
 
 // ================= summary =================
