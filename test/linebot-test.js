@@ -327,11 +327,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.20', () => {
+t('14. doPost logs Bot version 1.1.21', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.20') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.21') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -871,13 +871,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.20') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.21') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.20') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.21') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1457,6 +1457,42 @@ t('109. monthly model check also updates the lists', () => {
   eq(e.props.get('DENY_0'), 'bad1.com', 'domain stored');
   assert(e.props.get('LISTS_UPDATED'), 'date stamped');
   assert(e.logs.some(l => l.indexOf('可信度名單已更新') !== -1), 'update logged: ' + e.logs.join(' / '));
+});
+
+t('110. content-farm list: 218 entries, well-formed, no dupes, 14 .tw', () => {
+  const m = CODE.match(/const CONTENT_FARM_DOMAINS = \[([\s\S]*?)\];/);
+  assert(m, 'array found in Code.gs');
+  const items = m[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
+  eq(items.length, 218, 'count pinned (add a domain -> update this number)');
+  eq(new Set(items).size, items.length, 'no duplicates');
+  items.forEach(d => assert(/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(d), 'bad domain: ' + d));
+  eq(items.filter(d => d.endsWith('.tw') || d.endsWith('.com.tw')).length, 14, '.tw count');
+});
+
+t('111. farm domains blocked with no stored list, merged with stored list', () => {
+  const e = fresh(); // no DENY_* props at all
+  assert(e.sb.isDenylisted('https://www.bomb01.com/a'), 'bomb01');
+  assert(e.sb.isDenylisted('https://cmoney.tw/a'), 'cmoney.tw');
+  assert(e.sb.isDenylisted('https://www.life.com.tw/a'), 'life.com.tw');
+  assert(e.sb.isDenylisted('https://news.bomb01.com/a'), 'farm subdomain');
+  assert(!e.sb.isDenylisted('https://www.mohw.gov.tw/a'), 'clean not blocked');
+  const e2 = fresh();
+  setProps(e2, { DENY_COUNT: '1', DENY_0: 'infowars.com' });
+  assert(e2.sb.isDenylisted('https://infowars.com/a'), 'stored list still works');
+  assert(e2.sb.isDenylisted('https://bomb01.com/a'), 'farm list merged in');
+});
+
+t('112. content-farm search result dropped end to end', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', EXA_API_KEY: 'exa-test' });
+  e.state.exa = { results: [
+    { title: '農場文章', url: 'https://bomb01.com/a', text: '吃大蒜可以治百病。' },
+    { title: '衛福部闢謠', url: 'https://www.mohw.gov.tw/news/1', text: '衛福部表示沒有證據。' },
+  ] };
+  e.sb.handleEvent(msgEv({ text: '查 吃大蒜可以治百病是真的嗎' }));
+  const q = geminiQuestion(e, 0);
+  assert(q.indexOf('衛福部表示沒有證據') !== -1, 'clean kept');
+  assert(q.indexOf('bomb01.com') === -1, 'farm dropped');
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
