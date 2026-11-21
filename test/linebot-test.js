@@ -315,11 +315,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.13', () => {
+t('14. doPost logs Bot version 1.1.14', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.13') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.14') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -371,7 +371,7 @@ t('20. panel trigger in group -> no panel, silent', () => {
 });
 
 // ================= length gate =================
-t('21. group short plain text (<100) -> silent', () => {
+t('21. group short plain text (<200) -> silent', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.handleEvent(groupEv({ text: '今天天氣很好大家早安' }));
@@ -379,11 +379,11 @@ t('21. group short plain text (<100) -> silent', () => {
   eq(geminiCalls(e).length, 0, 'no gemini');
 });
 
-t('22. group long plain text (>=100) -> auto fact-check', () => {
+t('22. group long plain text (>=200) -> auto fact-check', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
-  const long = '這是一個很長的轉發訊息，內容是關於某個健康謠言，說每天喝某種東西可以治百病，請大家一定要看完並且轉發給親友注意身體健康。'.repeat(2);
-  assert(long.length >= 100, 'test text long enough: ' + long.length);
+  const long = '這是一個很長的轉發訊息，內容是關於某個健康謠言，說每天喝某種東西可以治百病，請大家一定要看完並且轉發給親友注意身體健康。'.repeat(4);
+  assert(long.length >= 200, 'test text long enough: ' + long.length);
   e.sb.handleEvent(groupEv({ text: long }));
   eq(geminiCalls(e).length, 1, 'auto-checked');
 });
@@ -407,7 +407,7 @@ t('24. short URL in group -> auto fact-check (link fetch)', () => {
 t('25. allow-list: non-listed user long text silent, listed user checked, manual bypasses', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', ALLOW_C1: JSON.stringify({ U1: true }) });
-  const long = '這是一個很長的轉發訊息，內容是關於某個健康謠言，說每天喝某種東西可以治百病，請大家一定要看完並且轉發給親友注意身體健康。'.repeat(2);
+  const long = '這是一個很長的轉發訊息，內容是關於某個健康謠言，說每天喝某種東西可以治百病，請大家一定要看完並且轉發給親友注意身體健康。'.repeat(4);
   e.sb.handleEvent(groupEv({ userId: 'U2', text: long }));
   eq(geminiCalls(e).length, 0, 'U2 blocked');
   e.sb.handleEvent(groupEv({ userId: 'U1', text: long }));
@@ -839,7 +839,7 @@ t('63. copy card has clipboard action with current value', () => {
     }
   })(flex);
   assert(clip, 'clipboard button found');
-  eq(clip.clipboardText, '100', 'current number copied');
+  eq(clip.clipboardText, '200', 'current number copied');
   e.sb.handleEvent(postEv({ data: 'panel:triggers' }));
   const flex2 = e.replies[e.replies.length - 1].messages[0];
   assert(JSON.stringify(flex2).indexOf('查,!fact') !== -1, 'current triggers shown');
@@ -859,13 +859,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.13') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.14') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.13') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.14') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -919,7 +919,8 @@ t('69. doPost does NOT touch triggers; opening the panel creates it', () => {
 t('70. reply + @mention checks the quoted message, not the reply', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
-  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。';
+  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。而且聽說還有醫生出來背書，說每天早上空腹吃三瓣大蒜，連續吃一個月身體就會明顯改善，很多人都照著做，效果非常好，請大家一定要試試看，真的不要錯過。這個消息已經在很多群組裡面傳開了，大家都在討論，到底是真的還是假的，真的很想知道答案。';
+  assert(rumor.length >= 200, 'rumor long enough: ' + rumor.length);
   e.sb.handleEvent(groupEv({ userId: 'U2', message: { id: 'm1', type: 'text', text: rumor } }));
   eq(geminiCalls(e).length, 1, 'target auto-checked once');
   e.sb.handleEvent(groupEv({ userId: 'U1', message: { id: 'm2', type: 'text', text: '@查核小幫手 查', quotedMessageId: 'm1', mention: { mentionees: [{ index: 0, length: 6, userId: 'Ubot', isSelf: true }] } } }));
@@ -933,7 +934,8 @@ t('70. reply + @mention checks the quoted message, not the reply', () => {
 t('71. reply + trigger word checks the quoted message', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
-  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。';
+  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。而且聽說還有醫生出來背書，說每天早上空腹吃三瓣大蒜，連續吃一個月身體就會明顯改善，很多人都照著做，效果非常好，請大家一定要試試看，真的不要錯過。這個消息已經在很多群組裡面傳開了，大家都在討論，到底是真的還是假的，真的很想知道答案。';
+  assert(rumor.length >= 200, 'rumor long enough: ' + rumor.length);
   e.sb.handleEvent(groupEv({ userId: 'U2', message: { id: 'm1', type: 'text', text: rumor } }));
   e.sb.handleEvent(groupEv({ userId: 'U1', message: { id: 'm2', type: 'text', text: '查', quotedMessageId: 'm1' } }));
   eq(geminiCalls(e).length, 2, 'quoted check ran');
@@ -951,12 +953,14 @@ t('72. quoted message not remembered -> says so, no Gemini call', () => {
 t('73. plain reply without tag or trigger does not check the quoted message', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
-  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。';
+  const rumor = '聽說吃大蒜可以治百病，台灣某公司已經證實了這個說法，而且政府都承認了，快點轉發給大家知道，真的不要不相信，這是長輩群組裡面大家都在傳的消息，很多人都已經試過了，說效果非常好，一定要看完再轉發，千萬不要錯過這個重要的健康資訊。而且聽說還有醫生出來背書，說每天早上空腹吃三瓣大蒜，連續吃一個月身體就會明顯改善，很多人都照著做，效果非常好，請大家一定要試試看，真的不要錯過。這個消息已經在很多群組裡面傳開了，大家都在討論，到底是真的還是假的，真的很想知道答案。';
+  assert(rumor.length >= 200, 'rumor long enough: ' + rumor.length);
   e.sb.handleEvent(groupEv({ userId: 'U2', message: { id: 'm1', type: 'text', text: rumor } }));
   const n = geminiCalls(e).length;
   e.sb.handleEvent(groupEv({ userId: 'U1', message: { id: 'm2', type: 'text', text: '真的嗎', quotedMessageId: 'm1' } }));
   eq(geminiCalls(e).length, n, 'short plain reply stays silent');
-  const longReply = '我也聽說過這個說法，之前還有人在群組裡面轉發過類似的內容，真的不知道該不該相信才好，大家都說吃大蒜對身體很好，到底是真的還是假的呢，我媽媽昨天也問我這件事，她說鄰居都在傳，還叫我一定要看，真的很想知道答案。';
+  const longReply = '我也聽說過這個說法，之前還有人在群組裡面轉發過類似的內容，真的不知道該不該相信才好，大家都說吃大蒜對身體很好，到底是真的還是假的呢，我媽媽昨天也問我這件事，她說鄰居都在傳，還叫我一定要看，真的很想知道答案。我阿嬤也說她年輕的時候就聽過這個偏方，說大蒜可以殺菌又可以預防感冒，冬天到了大家都會多吃一點，到底有沒有效真的很難說，還是問一下查核小幫手比較保險，而且網路上也有很多不同的說法，看得我眼花撩亂，不知道該相信哪一個才好。';
+  assert(longReply.length >= 200, 'long reply long enough: ' + longReply.length);
   e.sb.handleEvent(groupEv({ userId: 'U1', message: { id: 'm3', type: 'text', text: longReply, quotedMessageId: 'm1' } }));
   eq(geminiCalls(e).length, n + 1, 'long reply auto-checked');
   assert(geminiQuestion(e, n).indexOf('我也聽說過') !== -1, 'checks the reply itself');
@@ -1161,6 +1165,15 @@ t('90. reply over LINE max (6000 chars) is still cut at 5000 with marker', () =>
   const reply = replyTexts(e)[0];
   eq(reply.length, 5002, '5000 chars + marker');
   assert(reply.endsWith('……'), 'cut marker present');
+});
+
+t('91. group 150-char text -> silent under new 200 default', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  const mid = '這是一個很長的轉發訊息，內容是關於某個健康謠言，說每天喝某種東西可以治百病，請大家一定要看完並且轉發給親友注意身體健康。'.repeat(3);
+  assert(mid.length >= 100 && mid.length < 200, 'between old and new threshold: ' + mid.length);
+  e.sb.handleEvent(groupEv({ text: mid }));
+  eq(geminiCalls(e).length, 0, 'silent under 200');
 });
 
 // ================= summary =================

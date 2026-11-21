@@ -16,7 +16,7 @@
  *   OWNER_USER_ID             — 擁有者的 LINE userId；第一次在 1:1 傳送「設定」的人會自動成為擁有者
  *   SYSTEM_PROMPT             — 查核提示詞（預設見下方 SYSTEM_PROMPT_DEFAULT）
  *   TRIGGERS                  — 手動觸發詞，用逗號分開（預設：!查,!fact,!check,!factcheck,查,查一下,幫我查）
- *   AUTO_MIN_CHARS            — 自動查核的字數下限（預設 100 字；手動觸發不受限）
+ *   AUTO_MIN_CHARS            — 自動查核的字數下限（預設 200 字；手動觸發不受限）
  *   MAX_REPLY_CHARS           — 回覆字數上限（預設 5000；LINE 單則訊息上限就是 5000，設滿才不會在來源清單中間被切斷）
  *   MAX_OUTPUT_TOKENS         — 回答長度上限（預設 2000 tokens；600 字回答 + 5 條長網址來源約 2100 字，1200 不夠）
  *   FETCH_LINK_TEXT           — 1=抓取連結內文再查核，0=只傳連結（預設 1）
@@ -46,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.13';
+const SCRIPT_VERSION = '1.1.14';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -117,7 +117,7 @@ function settings() {
     fallback: prop('GEMINI_MODEL_FALLBACK', 'gemini-3.5-flash-lite'),
     systemPrompt: prop('SYSTEM_PROMPT', SYSTEM_PROMPT_DEFAULT),
     triggers: splitList(prop('TRIGGERS', TRIGGERS_DEFAULT.join(','))),
-    autoMinChars: numProp('AUTO_MIN_CHARS', 100),
+    autoMinChars: numProp('AUTO_MIN_CHARS', 200),
     maxReplyChars: numProp('MAX_REPLY_CHARS', 5000),
     maxOutputTokens: numProp('MAX_OUTPUT_TOKENS', 2000),
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
@@ -635,7 +635,7 @@ function handlePostback(ev) {
     savePanelState(userId, { step: 'await_number', key: key });
     const cur = key === 'AUTO_MIN_CHARS' ? String(s.autoMinChars)
       : key === 'MAX_REPLY_CHARS' ? String(s.maxReplyChars) : String(s.maxOutputTokens);
-    const hint = key === 'AUTO_MIN_CHARS' ? '例如：100'
+    const hint = key === 'AUTO_MIN_CHARS' ? '例如：200'
       : key === 'MAX_REPLY_CHARS' ? 'LINE 上限 5000，例如：5000' : '例如：2000';
     replyFlex(token, copyFlex('更改數字', '點下面複製目前的數字，貼到輸入框再改，傳送給我（' + hint + '）。傳送「取消」可以離開。', cur, '複製目前數字'));
     return;
