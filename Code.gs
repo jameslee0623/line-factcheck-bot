@@ -22,6 +22,7 @@
  *   FETCH_LINK_TEXT           — 1=抓取連結內文再查核，0=只傳連結（預設 1）
  *   IMAGE                     — 1=有字圖片查核（1:1 和群組用同一個開關），0=不查（預設 1）
  *   TAVILY_API_KEY            — Tavily 免費搜尋金鑰（tavily.com 申請，1000 次/月不用信用卡）；沒設就照原本方式回答
+ *   TAVILY                     — 1=即時搜尋開，0=關（預設 1；沒設 TAVILY_API_KEY 時就算開也不會搜尋）
  *   GROUP_NAMES               — 自動學到的群組名單（JSON，機器人自己寫）
  *   GROUP_MEMBERS_<groupId>   — 自動學到的群組成員（JSON，機器人自己寫）
  *   ALLOW_<groupId>           — 該群組可以自動查核的人（JSON，面板設定；沒設就是全部人）
@@ -45,7 +46,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.11';
+const SCRIPT_VERSION = '1.1.12';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -121,7 +122,7 @@ function settings() {
     maxOutputTokens: numProp('MAX_OUTPUT_TOKENS', 1200),
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
-    tavily: prop('TAVILY_API_KEY', '') !== '',
+    tavily: prop('TAVILY', '1') !== '0' && prop('TAVILY_API_KEY', '') !== '',
     ownerId: prop('OWNER_USER_ID', '')
   };
 }
@@ -622,7 +623,7 @@ function handlePostback(ev) {
   }
   if (p[1] === 'toggle') {
     const key = p[2];
-    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE') return;
+    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'TAVILY') return;
     const dflt = '1';
     setProp(key, prop(key, dflt) === '1' ? '0' : '1');
     replyFlex(token, panelFlex(settings()));
@@ -735,7 +736,7 @@ function panelFlex(s) {
     flexSection('自動查核', [
       flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
       flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
-      flexRow('即時搜尋 (Tavily)', s.tavily ? '開' : '關', null),
+      flexRow('即時搜尋 (Tavily)', s.tavily ? '開' : '關', flexBtn('切換', 'panel:toggle:TAVILY')),
       flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE')),
       flexRow('影片 · 檔案 / 連結', '暫停', null),
       flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'))
@@ -977,7 +978,7 @@ function askGemini(question, imageB64, s, searchQuery) {
   let q = question;
   let searched = false;
   let tavilyItems = [];
-  if (!imageB64 && searchQuery) {
+  if (!imageB64 && searchQuery && s.tavily) {
     const queryText = searchQuery.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
     if (queryText.length >= 10) {
       tavilyItems = tavilySearch(queryText);
