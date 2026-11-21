@@ -315,11 +315,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.1.10', () => {
+t('14. doPost logs Bot version 1.1.11', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.10') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.1.11') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -859,13 +859,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.1.10') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.1.11') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.1.10') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.1.11') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1069,6 +1069,55 @@ t('83. panel and fallback show Tavily status', () => {
   e2.sb.handleEvent(msgEv({ text: '設定' }));
   const fallbackOn = e2.replies[1].messages[0].text;
   assert(fallbackOn.indexOf('即時搜尋：開') !== -1, 'on with key');
+});
+
+t('84. Tavily: model writes a wrong source list (drops [1]) -> bot replaces it with the real numbered list', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', TAVILY_API_KEY: 'tvly-test' });
+  e.state.tavily = { results: [
+    { title: '雞蛋膽固醇迷思', url: 'https://example.com/egg', content: '一天一顆蛋對健康成人沒有問題。' },
+    { title: '博田國際健康管理中心', url: 'https://wellness.parkonehealth.tw/cholesterol', content: '膽固醇要注意飽和脂肪。' },
+    { title: '東元綜合醫院', url: 'https://www.tyh.com.tw/health/f20.html', content: '蛋的烹調方式很重要。' },
+    { title: '衛福部國民健康署', url: 'https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180', content: '水煮蛋是好的選擇。' },
+  ] };
+  const modelText = '烹調方式是關鍵：比起限制蛋的數量，怎麼烹調更重要。建議選擇水煮、水波或茶葉蛋等少油的方式，避免油炸或搭配過多飽和脂肪，對心血管負擔才最小[1, 2]。\n\n祝大家都身體健康、吃得安心！\n\n資料來源：\n- 衛福部國民健康署：https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180 [4]\n- 博田國際健康管理中心：https://wellness.parkonehealth.tw/cholesterol [2]\n- 東元綜合醫院：https://www.tyh.com.tw/health/f20.html [3]';
+  e.state.gemini = () => e.resp(200, e.geminiOk(modelText, []));
+  e.sb.handleEvent(msgEv({ text: '查 每天吃雞蛋對膽固醇有影響嗎' }));
+  const reply = replyTexts(e)[0];
+  assert(reply.indexOf('對心血管負擔才最小[1, 2]') !== -1, 'body kept: ' + reply);
+  assert(reply.indexOf('雞蛋膽固醇迷思：https://example.com/egg [1]') !== -1, '[1] in list: ' + reply);
+  assert(reply.indexOf('博田國際健康管理中心：https://wellness.parkonehealth.tw/cholesterol [2]') !== -1, '[2] in list');
+  assert(reply.indexOf('東元綜合醫院：https://www.tyh.com.tw/health/f20.html [3]') !== -1, '[3] in list');
+  assert(reply.indexOf('衛福部國民健康署：https://www.hpa.gov.tw/Pages/Detail.aspx?nodeid=1425&pid=15180 [4]') !== -1, '[4] in list');
+  eq(reply.split('資料來源：').length - 1, 1, 'one source list only');
+});
+
+t('85. grounding: model writes a wrong source list -> bot replaces it with numbered chunks', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  const modelText = '答案是這樣[1, 2]。\n\n資料來源：\n- 錯的來源：https://example.com/x [9]';
+  e.state.gemini = () => e.resp(200, { candidates: [{ content: { parts: [{ text: modelText }] }, groundingMetadata: { groundingChunks: [
+    { web: { uri: 'https://example.com/a', title: '來源 A' } },
+    { web: { uri: 'https://example.com/b', title: '來源 B' } },
+  ] } }] });
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  const reply = replyTexts(e)[0];
+  assert(reply.indexOf('答案是這樣[1, 2]') !== -1, 'body kept: ' + reply);
+  assert(reply.indexOf('來源 A：https://example.com/a [1]') !== -1, '[1] chunk: ' + reply);
+  assert(reply.indexOf('來源 B：https://example.com/b [2]') !== -1, '[2] chunk');
+  assert(reply.indexOf('[9]') === -1, 'model list gone');
+  assert(reply.indexOf('錯的來源') === -1, 'model list gone');
+});
+
+t('86. no search results -> bot appends nothing, model text unchanged', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  const modelText = '答案是這樣[1]。\n\n資料來源：\n- 某來源：https://example.com/x [1]';
+  e.state.gemini = () => e.resp(200, e.geminiOk(modelText, []));
+  e.sb.handleEvent(msgEv({ text: '查 這個說法是真的嗎' }));
+  const reply = replyTexts(e)[0];
+  assert(reply.indexOf('答案是這樣[1]') !== -1, 'body kept: ' + reply);
+  assert(reply.indexOf('某來源：https://example.com/x [1]') !== -1, 'model list kept when no real sources');
 });
 
 // ================= summary =================

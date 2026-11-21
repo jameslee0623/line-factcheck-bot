@@ -45,7 +45,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.1.10';
+const SCRIPT_VERSION = '1.1.11';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -67,7 +67,7 @@ const SYSTEM_PROMPT_DEFAULT = [
   '你是一個在家庭長輩群組裡的溫和事實查核小幫手。',
   '用繁體中文回答，語氣像晚輩對長輩一樣尊重、溫和。',
   '先肯定訊息中正確或有道理的部分，再用「補充資料」的方式指出錯誤或缺少的脈絡，不要直接說對方錯了，也不要用對抗、嘲諷的語氣。',
-  '用搜尋到的資料查核，不要只憑記憶；每個關鍵說法都要有來源，回答最後列出「資料來源：」加連結。',
+  '用搜尋到的資料查核，不要只憑記憶；每個關鍵說法都要有來源，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附上真正的清單；沒有搜尋結果時不要編造來源連結。',
   '回答要簡短，重點清楚，不要超過 600 字。',
   '如果查不到可靠資料，就說查不到，不要硬編答案。'
 ].join('\n');
@@ -249,11 +249,11 @@ function fetchLinkText(url) {
 }
 
 // Tavily 即時搜尋（免費 1000 次/月，不用信用卡）：把問題拿去搜尋，
-// 回傳整理好的結果文字，交給 Gemini 判斷。沒設 TAVILY_API_KEY、
-// 搜尋失敗或沒有結果都回空字串，機器人就照原本的方式回答。
+// 回傳結果陣列 [{title, url, content}]，交給 Gemini 判斷。
+// 沒設 TAVILY_API_KEY、搜尋失敗或沒有結果都回空陣列，機器人就照原本的方式回答。
 function tavilySearch(query) {
   const key = prop('TAVILY_API_KEY', '');
-  if (!key || !query) return '';
+  if (!key || !query) return [];
   try {
     const res = UrlFetchApp.fetch('https://api.tavily.com/search', {
       method: 'post',
@@ -264,20 +264,17 @@ function tavilySearch(query) {
     });
     if (res.getResponseCode() !== 200) {
       console.log('Tavily 搜尋失敗: ' + res.getResponseCode());
-      return '';
+      return [];
     }
     const data = JSON.parse(res.getContentText());
-    const results = data.results || [];
-    if (!results.length) return '';
-    const lines = [];
-    results.forEach(function (r, i) {
-      lines.push((i + 1) + '. ' + (r.title || '') + '\n' + (r.url || '') + '\n' + (r.content || '').slice(0, 500));
-    });
+    const results = (data.results || []).map(function (r) {
+      return { title: r.title || '', url: r.url || '', content: (r.content || '').slice(0, 500) };
+    }).filter(function (r) { return r.url; });
     console.log('Tavily 搜尋：找到 ' + results.length + ' 則結果');
-    return lines.join('\n\n');
+    return results;
   } catch (err) {
     console.log('Tavily 搜尋失敗: ' + err);
-    return '';
+    return [];
   }
 }
 
@@ -942,6 +939,28 @@ function ensureMonthlyTrigger() {
 // ---------- Gemini ----------
 // 主要模型用滿（429）或出錯時，自動改用備用模型。兩個模型各有自己的免費額度，
 // 所以備用模型不會吃掉主要模型的額度。
+// 模型自己寫的「資料來源：」清單編號常常對不上（會漏 [1]、多出沒引用的編號），
+// 機器人有真正的來源時，先把模型寫的那段拿掉，再附上真正的清單。
+function stripModelSources(text) {
+  const i = (text || '').search(/\n\s*資料來源\s*[：:]/);
+  return i === -1 ? text : text.slice(0, i).trim();
+}
+
+function formatSourceList(items) {
+  return items.map(function (it, i) {
+    const t = (it.title || '').trim();
+    return '- ' + (t ? t + '：' : '') + it.url + ' [' + (i + 1) + ']';
+  }).join('\n');
+}
+
+// 附上真正的來源清單：編號和給 Gemini 看的搜尋結果編號一致，
+// 這樣內文的 [1]、[2] 一定找得到。沒有真正的來源就不附（也不編）。
+function attachSources(text, items) {
+  items = items || [];
+  if (!items.length) return text;
+  return stripModelSources(text) + '\n\n資料來源：\n' + formatSourceList(items);
+}
+
 function askGemini(question, imageB64, s, searchQuery) {
   s = s || settings();
   const primary = s.model;
@@ -954,28 +973,33 @@ function askGemini(question, imageB64, s, searchQuery) {
 
   // Tavily 即時搜尋：有設定 key 且不是圖片時，先把問題（去掉連結）拿去搜尋，
   // 再把結果交給 Gemini。搜尋成功就不用 Google 搜尋工具（免費版 3.x 不能用，會直接 429）。
+  // 結果編號 1、2、3… 和回答裡的 [1]、[2] 對上，機器人最後自己附來源清單。
   let q = question;
   let searched = false;
+  let tavilyItems = [];
   if (!imageB64 && searchQuery) {
     const queryText = searchQuery.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
     if (queryText.length >= 10) {
-      const results = tavilySearch(queryText);
-      if (results) {
-        q = question + '\n\n即時搜尋結果（請根據這些來源判斷，並在回答裡附上來源連結）：\n' + results;
+      tavilyItems = tavilySearch(queryText);
+      if (tavilyItems.length) {
+        const lines = tavilyItems.map(function (r, i) {
+          return (i + 1) + '. ' + r.title + '\n' + r.url + '\n' + r.content;
+        });
+        q = question + '\n\n即時搜尋結果（請根據這些來源判斷，內文用 [1]、[2] 這種編號標來源；不要自己寫「資料來源：」清單，機器人會附）：\n' + lines.join('\n\n');
         searched = true;
       }
     }
   }
 
   const res = callGeminiModel(primary, key, q, imageB64, s, !searched);
-  if (res.ok) return res.text;
+  if (res.ok) return attachSources(res.text, searched ? tavilyItems : res.sources);
 
   // 可以換備用模型試試的錯誤：429（額度用完）、404（型號退役）、5xx（Google 那邊暫時出錯）、0（連不上或回應壞掉）
   const retryable = res.code === 429 || res.code === 404 || res.code === 0 || res.code >= 500;
   if (retryable && fallback && fallback !== primary) {
     console.log('主要模型 ' + primary + ' 失敗 (' + res.code + ')，改用備用模型 ' + fallback);
     const res2 = callGeminiModel(fallback, key, q, imageB64, s, !searched);
-    if (res2.ok) return res2.text;
+    if (res2.ok) return attachSources(res2.text, searched ? tavilyItems : res2.sources);
     return friendlyGeminiError(res2.code, res2.body);
   }
   return friendlyGeminiError(res.code, res.body);
@@ -1057,16 +1081,17 @@ function tryOnce(model, key, question, imageB64, useTools, s) {
     return { ok: false, code: 0, body: '' };
   }
 
-  // 來源連結（grounding 附的）
+  // 來源連結（grounding 附的）：只收集起來，不在這裡附上——
+  // askGemini 會用同一份編號附上真正的清單，模型自己寫的清單會被拿掉。
   const chunks = (cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || [];
   const sources = [];
   chunks.forEach(function (c) {
     const w = c.web || {};
-    if (w.uri && sources.indexOf(w.uri) === -1) sources.push(w.uri);
+    if (w.uri && sources.every(function (s2) { return s2.url !== w.uri; })) {
+      sources.push({ title: w.title || '', url: w.uri });
+    }
   });
-  let out = text.trim();
-  if (sources.length) out += '\n\n資料來源：\n' + sources.slice(0, 5).join('\n');
-  return { ok: true, text: out };
+  return { ok: true, text: text.trim(), sources: sources };
 }
 
 // 兩個模型都失敗時，給群組看的白話訊息。
