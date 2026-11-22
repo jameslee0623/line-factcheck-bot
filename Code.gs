@@ -52,7 +52,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.2.0';
+const SCRIPT_VERSION = '1.2.1';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -899,6 +899,9 @@ function handlePostback(ev) {
 function flexBtn(label, data) {
   return { type: 'button', style: 'secondary', height: 'sm', action: { type: 'postback', label: label, data: data } };
 }
+function flexUriBtn(label, uri) {
+  return { type: 'button', style: 'secondary', height: 'sm', action: { type: 'uri', label: label, uri: uri } };
+}
 
 function flexRow(label, value, btn) {
   const c = [
@@ -929,19 +932,22 @@ function copyFlex(title, instruction, currentText, copyLabel) {
   ]);
 }
 
-function flexBubble(headerText, headerSub, bodyContents) {
+function flexBubble(headerText, headerSub, bodyContents, headerBtn) {
+  const titleBox = {
+    type: 'box', layout: 'vertical', flex: 1,
+    contents: [
+      { type: 'text', text: headerText, weight: 'bold', size: 'lg' },
+      { type: 'text', text: headerSub, size: 'xs', color: '#888888' }
+    ]
+  };
   return {
     type: 'flex',
     altText: headerText,
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box', layout: 'vertical',
-        contents: [
-          { type: 'text', text: headerText, weight: 'bold', size: 'lg' },
-          { type: 'text', text: headerSub, size: 'xs', color: '#888888' }
-        ]
-      },
+      header: headerBtn
+        ? { type: 'box', layout: 'horizontal', contents: [titleBox, headerBtn] }
+        : { type: 'box', layout: 'vertical', contents: titleBox.contents },
       body: { type: 'box', layout: 'vertical', spacing: 'md', contents: bodyContents }
     }
   };
@@ -973,7 +979,7 @@ function panelFlex(s) {
     ]),
     flexSep(),
     { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程') + ' · 名單：' + (s.listsUpdated || '未更新'), size: 'xs', color: '#aaaaaa', align: 'center' }
-  ]);
+  ], flexUriBtn('❤️ 支持這個專案', 'https://ko-fi.com/jameslee0623'));
 }
 
 function groupListFlex(s) {

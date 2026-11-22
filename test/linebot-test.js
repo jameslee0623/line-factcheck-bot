@@ -331,11 +331,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.2.0', () => {
+t('14. doPost logs Bot version 1.2.1', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.0') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.1') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -615,7 +615,7 @@ t('42. FETCH_LINK_TEXT=0 -> no fetch', () => {
 });
 
 // ================= flex structure =================
-t('43. flex JSON valid: all buttons postback panel:, data <= 300 chars', () => {
+t('43. flex JSON valid: postback buttons panel: + <=300 chars, URI buttons https', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner', GROUP_NAMES: JSON.stringify({ C1: '家族長輩群' }), GROUP_MEMBERS_C1: JSON.stringify({ U1: '爸爸' }) });
   const s = e.sb.settings();
@@ -634,10 +634,14 @@ t('43. flex JSON valid: all buttons postback panel:, data <= 300 chars', () => {
     })(card);
     assert(btns.length > 0, 'card ' + i + ' has buttons');
     btns.forEach(b => {
-      eq(b.action.type, 'postback', 'button postback');
-      assert(typeof b.action.data === 'string' && b.action.data.indexOf('panel:') === 0, 'data panel: ' + b.action.data);
-      assert(b.action.data.length <= 300, 'data length ' + b.action.data.length);
       assert(typeof b.action.label === 'string' && b.action.label.length > 0, 'label present');
+      if (b.action.type === 'uri') {
+        assert(typeof b.action.uri === 'string' && b.action.uri.indexOf('https://') === 0, 'uri https: ' + b.action.uri);
+      } else {
+        eq(b.action.type, 'postback', 'button postback');
+        assert(typeof b.action.data === 'string' && b.action.data.indexOf('panel:') === 0, 'data panel: ' + b.action.data);
+        assert(b.action.data.length <= 300, 'data length ' + b.action.data.length);
+      }
     });
   });
 });
@@ -875,13 +879,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.2.0') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.2.1') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.2.0') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.2.1') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1557,6 +1561,27 @@ t('114. over-budget list keeps the old list', () => {
   eq(e.props.get('DENY_0'), 'com:oldfarm', 'old list untouched');
   eq(e.props.get('DENY_COUNT'), '1', 'count untouched');
   eq(e.props.get('LISTS_UPDATED'), '2026-10-01', 'old date kept');
+});
+
+t('115. settings panel header has the Ko-fi support button, other cards do not', () => {
+  const e = fresh();
+  setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
+  const s = e.sb.settings();
+  const panel = e.sb.panelFlex(s);
+  const header = panel.contents.header;
+  eq(header.layout, 'horizontal', 'header is horizontal');
+  const btn = header.contents.filter(c => c.type === 'button')[0];
+  assert(btn, 'header has a button');
+  eq(btn.action.type, 'uri', 'button is a link');
+  eq(btn.action.uri, 'https://ko-fi.com/jameslee0623', 'Ko-fi link');
+  assert(btn.action.label.indexOf('支持這個專案') !== -1, 'label: ' + btn.action.label);
+  const title = header.contents[0];
+  assert(title.contents[0].text === '⚙️ 設定', 'title still first');
+  [e.sb.groupListFlex(s), e.sb.memberFlex('C1', s)].forEach((card, i) => {
+    const dump = JSON.stringify(card);
+    assert(dump.indexOf('ko-fi.com') === -1, 'card ' + i + ' has no Ko-fi button');
+    assert(dump.indexOf('"type":"uri"') === -1, 'card ' + i + ' has no URI button');
+  });
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
