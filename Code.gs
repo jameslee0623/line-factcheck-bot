@@ -52,7 +52,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.2.1';
+const SCRIPT_VERSION = '1.2.2';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -130,6 +130,7 @@ function settings() {
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
     exa: prop('EXA', '1') !== '0' && prop('EXA_API_KEY', '') !== '',
+    dark: prop('DARK_BG', '0') === '1',
     listsUpdated: prop('LISTS_UPDATED', ''),
     ownerId: prop('OWNER_USER_ID', '')
   };
@@ -777,7 +778,7 @@ function handlePanelText(token, text, userId, s) {
   }
   if (text === '提示詞') {
     savePanelState(userId, { step: 'await_prompt' });
-    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞'));
+    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞', s.dark));
     return true;
   }
 
@@ -842,8 +843,8 @@ function handlePostback(ev) {
   }
   if (p[1] === 'toggle') {
     const key = p[2];
-    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'EXA') return;
-    const dflt = '1';
+    if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'EXA' && key !== 'DARK_BG') return;
+    const dflt = key === 'DARK_BG' ? '0' : '1';
     setProp(key, prop(key, dflt) === '1' ? '0' : '1');
     replyFlex(token, panelFlex(settings()));
     return;
@@ -856,17 +857,17 @@ function handlePostback(ev) {
       : key === 'MAX_REPLY_CHARS' ? String(s.maxReplyChars) : String(s.maxOutputTokens);
     const hint = key === 'AUTO_MIN_CHARS' ? '例如：200'
       : key === 'MAX_REPLY_CHARS' ? 'LINE 上限 5000，例如：5000' : '例如：2000';
-    replyFlex(token, copyFlex('更改數字', '點下面複製目前的數字，貼到輸入框再改，傳送給我（' + hint + '）。傳送「取消」可以離開。', cur, '複製目前數字'));
+    replyFlex(token, copyFlex('更改數字', '點下面複製目前的數字，貼到輸入框再改，傳送給我（' + hint + '）。傳送「取消」可以離開。', cur, '複製目前數字', s.dark));
     return;
   }
   if (p[1] === 'prompt') {
     savePanelState(userId, { step: 'await_prompt' });
-    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞'));
+    replyFlex(token, copyFlex('更改提示詞', '點下面複製目前的提示詞，貼到輸入框再改，傳送給我。傳送「取消」可以離開。', s.systemPrompt, '複製目前提示詞', s.dark));
     return;
   }
   if (p[1] === 'triggers') {
     savePanelState(userId, { step: 'await_triggers' });
-    replyFlex(token, copyFlex('更改觸發詞', '點下面複製目前的觸發詞，貼到輸入框再改，傳送給我（用逗號分開，例如：查,!fact,幫我查）。傳送「取消」可以離開。', s.triggers.join(','), '複製目前觸發詞'));
+    replyFlex(token, copyFlex('更改觸發詞', '點下面複製目前的觸發詞，貼到輸入框再改，傳送給我（用逗號分開，例如：查,!fact,幫我查）。傳送「取消」可以離開。', s.triggers.join(','), '複製目前觸發詞', s.dark));
     return;
   }
   if (p[1] === 'groups') {
@@ -903,17 +904,19 @@ function flexUriBtn(label, uri) {
   return { type: 'button', style: 'secondary', height: 'sm', action: { type: 'uri', label: label, uri: uri } };
 }
 
-function flexRow(label, value, btn) {
+function flexRow(label, value, btn, dark) {
+  const labelText = { type: 'text', text: label, size: 'sm', flex: 2, gravity: 'center', maxLines: 1 };
+  if (dark) labelText.color = '#f0f0f0';
   const c = [
-    { type: 'text', text: label, size: 'sm', flex: 2, gravity: 'center', maxLines: 1 },
-    { type: 'text', text: value, size: 'sm', color: '#888888', flex: 2, wrap: true, gravity: 'center', maxLines: 1 }
+    labelText,
+    { type: 'text', text: value, size: 'sm', color: dark ? '#bbbbbb' : '#888888', flex: 2, wrap: true, gravity: 'center', maxLines: 1 }
   ];
   if (btn) c.push(btn);
   return { type: 'box', layout: 'horizontal', spacing: 'sm', contents: c };
 }
 
-function flexSection(title, rows) {
-  const contents = [{ type: 'text', text: title, size: 'xs', color: '#888888', weight: 'bold' }].concat(rows);
+function flexSection(title, rows, dark) {
+  const contents = [{ type: 'text', text: title, size: 'xs', color: dark ? '#aaaaaa' : '#888888', weight: 'bold' }].concat(rows);
   return { type: 'box', layout: 'vertical', spacing: 'sm', contents: contents };
 }
 
@@ -924,31 +927,41 @@ function flexSep() {
 // 一張小卡片：說明 + 目前的值 + 一個複製按鈕。
 // LINE 沒辦法直接把文字預填進輸入框，點複製再貼上改是最接近的做法。
 // 目前的值也印在卡片上，舊版 LINE 不能用複製按鈕時，長按文字也可以複製。
-function copyFlex(title, instruction, currentText, copyLabel) {
+function copyFlex(title, instruction, currentText, copyLabel, dark) {
+  const instructionText = { type: 'text', text: instruction, size: 'sm', wrap: true };
+  if (dark) instructionText.color = '#f0f0f0';
   return flexBubble(title, '點下面複製目前的值', [
-    { type: 'text', text: instruction, size: 'sm', wrap: true },
-    { type: 'text', text: currentText, size: 'sm', color: '#888888', wrap: true },
+    instructionText,
+    { type: 'text', text: currentText, size: 'sm', color: dark ? '#bbbbbb' : '#888888', wrap: true },
     { type: 'button', style: 'primary', height: 'sm', action: { type: 'clipboard', label: copyLabel, clipboardText: currentText } }
-  ]);
+  ], null, dark);
 }
 
-function flexBubble(headerText, headerSub, bodyContents, headerBtn) {
+function flexBubble(headerText, headerSub, bodyContents, headerBtn, dark) {
+  const titleText = { type: 'text', text: headerText, weight: 'bold', size: 'lg' };
+  if (dark) titleText.color = '#f0f0f0';
   const titleBox = {
     type: 'box', layout: 'vertical', flex: 1,
     contents: [
-      { type: 'text', text: headerText, weight: 'bold', size: 'lg' },
-      { type: 'text', text: headerSub, size: 'xs', color: '#888888' }
+      titleText,
+      { type: 'text', text: headerSub, size: 'xs', color: dark ? '#aaaaaa' : '#888888' }
     ]
   };
+  const headerBox = headerBtn
+    ? { type: 'box', layout: 'horizontal', contents: [titleBox, headerBtn] }
+    : { type: 'box', layout: 'vertical', contents: titleBox.contents };
+  const bodyBox = { type: 'box', layout: 'vertical', spacing: 'md', contents: bodyContents };
+  if (dark) {
+    headerBox.backgroundColor = '#262626';
+    bodyBox.backgroundColor = '#262626';
+  }
   return {
     type: 'flex',
     altText: headerText,
     contents: {
       type: 'bubble',
-      header: headerBtn
-        ? { type: 'box', layout: 'horizontal', contents: [titleBox, headerBtn] }
-        : { type: 'box', layout: 'vertical', contents: titleBox.contents },
-      body: { type: 'box', layout: 'vertical', spacing: 'md', contents: bodyContents }
+      header: headerBox,
+      body: bodyBox
     }
   };
 }
@@ -959,27 +972,31 @@ function panelFlex(s) {
   const monthlyOk = ensureMonthlyTrigger(); // 打開面板時檢查排程，不存在就建立
   return flexBubble('⚙️ 設定', '只有擁有者可以改', [
     flexSection('自動查核', [
-      flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS')),
-      flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT')),
-      flexRow('即時搜尋 (Exa)', s.exa ? '開' : '關', flexBtn('切換', 'panel:toggle:EXA')),
-      flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE')),
-      flexRow('影片 · 檔案 / 連結', '暫停', null),
-      flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'))
-    ]),
+      flexRow('字數下限', s.autoMinChars + ' 字', flexBtn('更改', 'panel:num:AUTO_MIN_CHARS'), s.dark),
+      flexRow('連結內文抓取', s.fetchLinkText ? '開' : '關', flexBtn('切換', 'panel:toggle:FETCH_LINK_TEXT'), s.dark),
+      flexRow('即時搜尋 (Exa)', s.exa ? '開' : '關', flexBtn('切換', 'panel:toggle:EXA'), s.dark),
+      flexRow('有字圖片', s.image ? '開' : '關', flexBtn('切換', 'panel:toggle:IMAGE'), s.dark),
+      flexRow('影片 · 檔案 / 連結', '暫停', null, s.dark),
+      flexRow('手動觸發', s.triggers.join(' / '), flexBtn('更改', 'panel:triggers'), s.dark)
+    ], s.dark),
     flexSep(),
     flexSection('查核提示詞', [
-      { type: 'text', text: s.systemPrompt.slice(0, 60) + '…', size: 'sm', color: '#888888', wrap: true, maxLines: 1 },
+      { type: 'text', text: s.systemPrompt.slice(0, 60) + '…', size: 'sm', color: s.dark ? '#bbbbbb' : '#888888', wrap: true, maxLines: 1 },
       flexBtn('更改提示詞', 'panel:prompt')
-    ]),
+    ], s.dark),
     flexSep(),
     flexSection('群組與成員', [
-      flexRow('選擇群組', groupCount ? groupCount + ' 個群組' : '還沒有群組記錄', flexBtn('選擇群組', 'panel:groups')),
-      flexRow('回覆長度上限', s.maxReplyChars + ' 字', flexBtn('更改', 'panel:num:MAX_REPLY_CHARS')),
-      flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'))
-    ]),
+      flexRow('選擇群組', groupCount ? groupCount + ' 個群組' : '還沒有群組記錄', flexBtn('選擇群組', 'panel:groups'), s.dark),
+      flexRow('回覆長度上限', s.maxReplyChars + ' 字', flexBtn('更改', 'panel:num:MAX_REPLY_CHARS'), s.dark),
+      flexRow('回答長度上限', s.maxOutputTokens + ' tokens', flexBtn('更改', 'panel:num:MAX_OUTPUT_TOKENS'), s.dark)
+    ], s.dark),
+    flexSep(),
+    flexSection('顯示', [
+      flexRow('深色背景', s.dark ? '開' : '關', flexBtn('切換', 'panel:toggle:DARK_BG'), s.dark)
+    ], s.dark),
     flexSep(),
     { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程') + ' · 名單：' + (s.listsUpdated || '未更新'), size: 'xs', color: '#aaaaaa', align: 'center' }
-  ], flexUriBtn('❤️ 支持這個專案', 'https://ko-fi.com/jameslee0623'));
+  ], flexUriBtn('❤️ 支持這個專案', 'https://ko-fi.com/jameslee0623'), s.dark);
 }
 
 function groupListFlex(s) {
@@ -988,13 +1005,13 @@ function groupListFlex(s) {
   const rows = ids.map(function (gid) {
     const members = jsonProp('GROUP_MEMBERS_' + gid, {});
     const n = Object.keys(members).length;
-    return flexRow(names[gid] || gid, n + ' 位成員', flexBtn('選擇', 'panel:group:' + gid));
+    return flexRow(names[gid] || gid, n + ' 位成員', flexBtn('選擇', 'panel:group:' + gid), s.dark);
   });
   if (!rows.length) {
-    rows.push({ type: 'text', text: '還沒有群組記錄。群組裡有人說話後，群組才會出現在這裡。', size: 'sm', color: '#888888', wrap: true });
+    rows.push({ type: 'text', text: '還沒有群組記錄。群組裡有人說話後，群組才會出現在這裡。', size: 'sm', color: s.dark ? '#bbbbbb' : '#888888', wrap: true });
   }
   rows.push(flexBtn('回設定', 'panel:home'));
-  return flexBubble('選擇群組', '先選群組，再選成員', rows);
+  return flexBubble('選擇群組', '先選群組，再選成員', rows, null, s.dark);
 }
 
 function memberFlex(groupId, s) {
@@ -1003,16 +1020,16 @@ function memberFlex(groupId, s) {
   const members = jsonProp('GROUP_MEMBERS_' + groupId, {});
   const ids = Object.keys(members);
   const rows = ids.map(function (uid) {
-    return flexRow(members[uid] || uid, isAllowed(groupId, uid) ? '開' : '關', flexBtn('切換', 'panel:user:' + groupId + ':' + uid));
+    return flexRow(members[uid] || uid, isAllowed(groupId, uid) ? '開' : '關', flexBtn('切換', 'panel:user:' + groupId + ':' + uid), s.dark);
   });
   if (!rows.length) {
-    rows.push({ type: 'text', text: '這個群組還沒有成員記錄。有人說話後，名字才會出現在這裡。', size: 'sm', color: '#888888', wrap: true });
+    rows.push({ type: 'text', text: '這個群組還沒有成員記錄。有人說話後，名字才會出現在這裡。', size: 'sm', color: s.dark ? '#bbbbbb' : '#888888', wrap: true });
   }
   rows.push(flexBtn('全部開啟', 'panel:all:' + groupId + ':on'));
   rows.push(flexBtn('全部關閉', 'panel:all:' + groupId + ':off'));
   rows.push(flexBtn('回群組列表', 'panel:groups'));
   rows.push(flexBtn('回設定', 'panel:home'));
-  return flexBubble(title, '只有勾選的人會被自動查核', rows);
+  return flexBubble(title, '只有勾選的人會被自動查核', rows, null, s.dark);
 }
 
 // ---------- 模型每月檢查 ----------

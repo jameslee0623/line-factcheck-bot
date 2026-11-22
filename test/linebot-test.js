@@ -331,11 +331,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.2.1', () => {
+t('14. doPost logs Bot version 1.2.2', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.1') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.2') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -879,13 +879,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.2.1') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.2.2') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.2.1') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.2.2') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1582,6 +1582,39 @@ t('115. settings panel header has the Ko-fi support button, other cards do not',
     assert(dump.indexOf('ko-fi.com') === -1, 'card ' + i + ' has no Ko-fi button');
     assert(dump.indexOf('"type":"uri"') === -1, 'card ' + i + ' has no URI button');
   });
+});
+
+t('116. dark toggle flips DARK_BG and the panel goes dark', () => {
+  const e = fresh();
+  e.props.set('OWNER_USER_ID', 'Uowner');
+  const s0 = e.sb.settings();
+  eq(s0.dark, false, 'dark off by default');
+  const light = JSON.stringify(e.sb.panelFlex(s0));
+  assert(light.indexOf('#262626') === -1, 'light panel has no dark bg');
+  assert(light.indexOf('backgroundColor') === -1, 'light panel sets no bg');
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:DARK_BG' }));
+  eq(e.props.get('DARK_BG'), '1', 'flipped on');
+  const dark = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(dark.indexOf('backgroundColor":"#262626') !== -1, 'dark bg set');
+  assert(dark.indexOf('"color":"#f0f0f0"') !== -1, 'title light');
+  assert(dark.indexOf('"color":"#bbbbbb"') !== -1, 'values light gray');
+  assert(dark.indexOf('深色背景') !== -1, 'toggle row present');
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:DARK_BG' }));
+  eq(e.props.get('DARK_BG'), '0', 'flipped back off');
+});
+
+t('117. dark theme covers group, member and copy cards', () => {
+  const e = fresh();
+  e.props.set('DARK_BG', '1');
+  const s = e.sb.settings();
+  eq(s.dark, true, 'dark on');
+  const g = JSON.stringify(e.sb.groupListFlex(s));
+  assert(g.indexOf('backgroundColor":"#262626') !== -1, 'group list dark');
+  const m = JSON.stringify(e.sb.memberFlex('C1', s));
+  assert(m.indexOf('backgroundColor":"#262626') !== -1, 'member list dark');
+  const c = JSON.stringify(e.sb.copyFlex('更改數字', '說明', '200', '複製', true));
+  assert(c.indexOf('backgroundColor":"#262626') !== -1, 'copy card dark');
+  assert(c.indexOf('"color":"#bbbbbb"') !== -1, 'copy value light gray');
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
