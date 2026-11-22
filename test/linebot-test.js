@@ -331,11 +331,11 @@ t('13. image download failure -> retry message', () => {
   assert(replyTexts(e)[0].indexOf('圖片下載失敗') !== -1, 'image fail msg');
 });
 
-t('14. doPost logs Bot version 1.2.2', () => {
+t('14. doPost logs Bot version 1.2.3', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't' });
   e.sb.doPost({ postData: { contents: JSON.stringify({ events: [groupEv({ text: '查 x' })] }) }, parameter: {} });
-  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.2') !== -1), 'version log: ' + e.logs.join(' / '));
+  assert(e.logs.some(l => l.indexOf('Bot version: 1.2.3') !== -1), 'version log: ' + e.logs.join(' / '));
 });
 
 // ================= panel triggers =================
@@ -838,7 +838,7 @@ t('62. panel value texts are one line (maxLines 1)', () => {
   const vals = [];
   (function walk(o) {
     if (o && typeof o === 'object') {
-      if (o.type === 'text' && o.size === 'sm' && o.color === '#888888') vals.push(o);
+      if (o.type === 'text' && o.size === 'sm' && (o.color === '#888888' || o.color === '#bbbbbb')) vals.push(o);
       Object.keys(o).forEach(k => walk(o[k]));
     }
   })(card);
@@ -879,13 +879,13 @@ t('65. panel shows the version number (flex + text fallback)', () => {
   const e = fresh();
   setProps(e, { GEMINI_API_KEY: 'k', LINE_CHANNEL_ACCESS_TOKEN: 't', OWNER_USER_ID: 'Uowner' });
   const dump = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
-  assert(dump.indexOf('版本 1.2.2') !== -1, 'version in panel');
+  assert(dump.indexOf('版本 1.2.3') !== -1, 'version in panel');
   assert(dump.indexOf('每月檢查：已排程') !== -1, 'monthly status in panel');
   e.state.replyCode = 500;
   e.sb.handleEvent(msgEv({ text: '設定' }));
   eq(e.replies.length, 2, 'flex attempt + text fallback');
   const fallback = e.replies[1].messages[0].text;
-  assert(fallback.indexOf('版本：1.2.2') !== -1, 'version in fallback');
+  assert(fallback.indexOf('版本：1.2.3') !== -1, 'version in fallback');
   assert(fallback.indexOf('每月檢查：已排程') !== -1, 'monthly status in fallback');
 });
 
@@ -1574,7 +1574,7 @@ t('115. settings panel header has the Ko-fi support button, other cards do not',
   assert(btn, 'header has a button');
   eq(btn.action.type, 'uri', 'button is a link');
   eq(btn.action.uri, 'https://ko-fi.com/jameslee0623', 'Ko-fi link');
-  assert(btn.action.label.indexOf('支持這個專案') !== -1, 'label: ' + btn.action.label);
+  assert(btn.action.label.indexOf('支持專案') !== -1, 'label: ' + btn.action.label);
   const title = header.contents[0];
   assert(title.contents[0].text === '⚙️ 設定', 'title still first');
   [e.sb.groupListFlex(s), e.sb.memberFlex('C1', s)].forEach((card, i) => {
@@ -1584,23 +1584,23 @@ t('115. settings panel header has the Ko-fi support button, other cards do not',
   });
 });
 
-t('116. dark toggle flips DARK_BG and the panel goes dark', () => {
+t('116. dark is on by default; toggle flips DARK_BG and the panel follows', () => {
   const e = fresh();
   e.props.set('OWNER_USER_ID', 'Uowner');
   const s0 = e.sb.settings();
-  eq(s0.dark, false, 'dark off by default');
-  const light = JSON.stringify(e.sb.panelFlex(s0));
-  assert(light.indexOf('#262626') === -1, 'light panel has no dark bg');
-  assert(light.indexOf('backgroundColor') === -1, 'light panel sets no bg');
-  e.sb.handleEvent(postEv({ data: 'panel:toggle:DARK_BG' }));
-  eq(e.props.get('DARK_BG'), '1', 'flipped on');
-  const dark = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  eq(s0.dark, true, 'dark on by default');
+  const dark = JSON.stringify(e.sb.panelFlex(s0));
   assert(dark.indexOf('backgroundColor":"#262626') !== -1, 'dark bg set');
   assert(dark.indexOf('"color":"#f0f0f0"') !== -1, 'title light');
   assert(dark.indexOf('"color":"#bbbbbb"') !== -1, 'values light gray');
   assert(dark.indexOf('深色背景') !== -1, 'toggle row present');
   e.sb.handleEvent(postEv({ data: 'panel:toggle:DARK_BG' }));
-  eq(e.props.get('DARK_BG'), '0', 'flipped back off');
+  eq(e.props.get('DARK_BG'), '0', 'flipped off');
+  const light = JSON.stringify(e.sb.panelFlex(e.sb.settings()));
+  assert(light.indexOf('#262626') === -1, 'light panel has no dark bg');
+  assert(light.indexOf('backgroundColor') === -1, 'light panel sets no bg');
+  e.sb.handleEvent(postEv({ data: 'panel:toggle:DARK_BG' }));
+  eq(e.props.get('DARK_BG'), '1', 'flipped back on');
 });
 
 t('117. dark theme covers group, member and copy cards', () => {

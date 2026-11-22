@@ -52,7 +52,7 @@
 
 // ---------- 常數 ----------
 // 版本號：每次改 Code.gs 就加一號，log 裡會印出來，方便確認部署的是哪一版。
-const SCRIPT_VERSION = '1.2.2';
+const SCRIPT_VERSION = '1.2.3';
 const LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 const LINE_CONTENT_URL = 'https://api.line.me/v2/bot/message/'; // + messageId + '/content'
 const LINE_API_BASE = 'https://api.line.me/v2/bot/';
@@ -130,7 +130,7 @@ function settings() {
     fetchLinkText: prop('FETCH_LINK_TEXT', '1') !== '0',
     image: prop('IMAGE', '1') !== '0',
     exa: prop('EXA', '1') !== '0' && prop('EXA_API_KEY', '') !== '',
-    dark: prop('DARK_BG', '0') === '1',
+    dark: prop('DARK_BG', '1') === '1',
     listsUpdated: prop('LISTS_UPDATED', ''),
     ownerId: prop('OWNER_USER_ID', '')
   };
@@ -844,7 +844,7 @@ function handlePostback(ev) {
   if (p[1] === 'toggle') {
     const key = p[2];
     if (key !== 'FETCH_LINK_TEXT' && key !== 'IMAGE' && key !== 'EXA' && key !== 'DARK_BG') return;
-    const dflt = key === 'DARK_BG' ? '0' : '1';
+    const dflt = '1';
     setProp(key, prop(key, dflt) === '1' ? '0' : '1');
     replyFlex(token, panelFlex(settings()));
     return;
@@ -996,7 +996,7 @@ function panelFlex(s) {
     ], s.dark),
     flexSep(),
     { type: 'text', text: '版本 ' + SCRIPT_VERSION + ' · 每月檢查：' + (monthlyOk ? '已排程' : '未排程') + ' · 名單：' + (s.listsUpdated || '未更新'), size: 'xs', color: '#aaaaaa', align: 'center' }
-  ], flexUriBtn('❤️ 支持這個專案', 'https://ko-fi.com/jameslee0623'), s.dark);
+  ], flexUriBtn('❤️ 支持專案', 'https://ko-fi.com/jameslee0623'), s.dark);
 }
 
 function groupListFlex(s) {
