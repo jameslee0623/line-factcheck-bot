@@ -1,4 +1,4 @@
-/**
+/** 
  * LINE 群組事實查核機器人 — Google Apps Script 版
  *
  * 用免費的 Gemini API 查核群組裡轉發的文章 / 說法，語氣溫和，先肯定再補充。
